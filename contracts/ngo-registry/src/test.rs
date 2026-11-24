@@ -2539,7 +2539,7 @@ fn approver_does_not_gain_admin_rights() {
     }]);
 
     assert!(client.try_remove_ngo(&owner).is_err());
-    assert!(client.get_ngo(&owner).verified == false);
+    assert!(!client.get_ngo(&owner).verified);
 }
 
 // =============================================================================
@@ -2674,7 +2674,7 @@ fn non_approver_cannot_reject() {
     let result = client.try_reject_ngo(&outsider, &owner, &3);
 
     assert_eq!(result, Err(Ok(Error::NotApprover)));
-    assert!(client.get_ngo(&owner).verified == false);
+    assert!(!client.get_ngo(&owner).verified);
 }
 
 #[test]
@@ -2725,7 +2725,6 @@ fn reject_ngo_frees_the_index_and_lets_the_owner_register_again() {
     assert!(!client.get_ngo(&b).verified);
     assert_eq!(client.total_ngos(), 3);
 }
-
 
 /// Names of the `pub fn`s in the `#[contractimpl]` block that opens with
 /// `impl_header`, read from the contract's source. Every one of them is a
@@ -2787,9 +2786,9 @@ fn roles_doc_lists_every_entry_point() {
 
     for name in entry_point_names(SOURCE, IMPL) {
         match role_rows(ROLES, START, END).find(|(row, _)| *row == name) {
-            None => panic!(
-                "`{name}` is a public NgoRegistry entry point with no row in docs/ROLES.md"
-            ),
+            None => {
+                panic!("`{name}` is a public NgoRegistry entry point with no row in docs/ROLES.md")
+            }
             Some((_, role)) => assert!(
                 !role.is_empty(),
                 "`{name}` has an empty role in docs/ROLES.md"
@@ -2811,12 +2810,6 @@ fn roles_doc_lists_every_entry_point() {
         );
     }
 }
-env);
-
-    client.register(&owner, &String::from_str(&env, "Red Cross"));
-
-    assert_ttls_bumped(&env, &client, &owner);
-}
 
 // =============================================================================
 // Test for list_ngos handling removed entries (Issue 4)
@@ -2824,68 +2817,54 @@ env);
 
 #[test]
 fn list_ngos_handles_removed_entries_correctly() {
-    let (env, client, admin) = setup();
-    
-    // Register 5 NGOs
-    let owners: Vec<Address> = (0..5).map(|_| Address::generate(&env)).collect();
-    
-    for (i, owner) in owners.iter().enumerate() {
-        let name = String::from_str(&env, &format!("NGO {}", i));
-        client.register(owner, &name);
-    }
-    
-    // Verify we have 5 NGOs registered
-    let initial_count = client.ngo_count();
-    assert_eq!(initial_count, 5);
-    
-    // Get the initial list of all NGOs
+    let (env, client, _admin) = setup();
+
+    // Register 5 NGOs using soroban_sdk collections (no_std crate)
+    let owner0 = Address::generate(&env);
+    let owner1 = Address::generate(&env);
+    let owner2 = Address::generate(&env);
+    let owner3 = Address::generate(&env);
+    let owner4 = Address::generate(&env);
+
+    client.register(&owner0, &String::from_str(&env, "NGO 0"));
+    client.register(&owner1, &String::from_str(&env, "NGO 1"));
+    client.register(&owner2, &String::from_str(&env, "NGO 2"));
+    client.register(&owner3, &String::from_str(&env, "NGO 3"));
+    client.register(&owner4, &String::from_str(&env, "NGO 4"));
+
+    assert_eq!(client.ngo_count(), 5);
+
     let initial_page = client.list_ngos_page(&0, &10);
     assert_eq!(initial_page.owners.len(), 5);
     assert_eq!(initial_page.next, 5);
-    
-    // Remove the NGO from the middle (index 2)
-    let middle_owner = &owners[2];
-    client.remove_ngo(middle_owner);
-    
-    // Verify count decreased
-    let after_removal_count = client.ngo_count();
-    assert_eq!(after_removal_count, 4);
-    
-    // List NGOs after removal
+
+    // Remove the middle owner
+    client.remove_ngo(&owner2);
+
+    assert_eq!(client.ngo_count(), 4);
+
     let after_removal_page = client.list_ngos_page(&0, &10);
     assert_eq!(after_removal_page.owners.len(), 4);
     assert_eq!(after_removal_page.next, 4);
-    
-    // Verify the removed NGO is not in the list
-    assert!(!after_removal_page.owners.contains(middle_owner));
-    
-    // Verify the other NGOs are still accessible
-    for (i, owner) in owners.iter().enumerate() {
-        if i != 2 {
-            // All NGOs except the removed one should still be accessible
-            assert!(client.try_get_ngo(owner).is_ok());
-        } else {
-            // The removed NGO should not be found
-            assert_eq!(client.try_get_ngo(owner), Err(Ok(Error::NotRegistered)));
-        }
-    }
-    
-    // Test pagination with removed entry
+    assert!(!after_removal_page.owners.contains(&owner2));
+
+    // The remaining owners are still accessible
+    assert!(client.try_get_ngo(&owner0).is_ok());
+    assert!(client.try_get_ngo(&owner1).is_ok());
+    assert_eq!(client.try_get_ngo(&owner2), Err(Ok(Error::NotRegistered)));
+    assert!(client.try_get_ngo(&owner3).is_ok());
+    assert!(client.try_get_ngo(&owner4).is_ok());
+
+    // Pagination over the 4 remaining entries
     let first_page = client.list_ngos_page(&0, &2);
     assert_eq!(first_page.owners.len(), 2);
     assert_eq!(first_page.next, 2);
-    
+
     let second_page = client.list_ngos_page(&2, &2);
     assert_eq!(second_page.owners.len(), 2);
     assert_eq!(second_page.next, 4);
-    
-    // All pages together should have 4 unique NGOs
-    let mut all_owners_after = first_page.owners.to_vec();
-    all_owners_after.extend(second_page.owners.to_vec());
-    assert_eq!(all_owners_after.len(), 4);
-    
-    // Verify consistency: no duplicates and middle owner not present
-    for owner in all_owners_after.iter() {
-        assert_ne!(owner, middle_owner);
-    }
+
+    // Neither page contains the removed owner
+    assert!(!first_page.owners.contains(&owner2));
+    assert!(!second_page.owners.contains(&owner2));
 }

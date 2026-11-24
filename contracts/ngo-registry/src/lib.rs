@@ -4,6 +4,7 @@ use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, Address, Bytes, BytesN,
     Env, String, Vec,
 };
+pub use streamgive_types::Ngo;
 
 #[contractevent(topics = ["register"], data_format = "single-value")]
 pub struct RegisterEvent {
@@ -111,28 +112,6 @@ pub struct RenewedEvent {
 #[contractevent(topics = ["verperiod"], data_format = "single-value")]
 pub struct VerifyPeriodSetEvent {
     pub verify_period: u64,
-}
-
-#[contracttype]
-// Debug and PartialEq let tests assert_eq! on a try_* call’s full
-// Result<Result<Ngo, _>, _> rather than unwrapping it by hand first.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Ngo {
-    pub owner: Address,
-    pub name: String,
-    pub verified: bool,
-    /// Optional owner-supplied reference to off-chain metadata (a website,
-    /// description, or logo), so an entry can be linked to what the NGO
-    /// publishes about itself. `None` until the owner calls
-    /// `set_metadata_uri`. Bounded by `MAX_METADATA_URI_LEN`. See issue #347.
-    pub metadata_uri: Option<String>,
-    /// Optional ledger timestamp at which this verification lapses. Set by
-    /// `approve_ngo` / `batch_approve` from the configured verification period
-    /// (see `set_verify_period`), and moved forward by `renew_ngo`. `None` means
-    /// the verification never expires. Once the current ledger timestamp
-    /// reaches it the entry is treated as unverified by `is_verified` and
-    /// `get_ngo`, until an admin renews it. See issue #348.
-    pub verified_until: Option<u64>,
 }
 
 /// A single page of the NGO owners index, returned by `list_ngos_page`.
@@ -1033,11 +1012,7 @@ impl NgoRegistry {
             .set(&DataKey::Approvers, &approvers);
         extend_instance_ttl(&env);
 
-        ApproverAddedEvent {
-            approver,
-            data: (),
-        }
-        .publish(&env);
+        ApproverAddedEvent { approver, data: () }.publish(&env);
 
         Ok(())
     }
@@ -1084,11 +1059,7 @@ impl NgoRegistry {
             .set(&DataKey::Approvers, &remaining);
         extend_instance_ttl(&env);
 
-        ApproverRemovedEvent {
-            approver,
-            data: (),
-        }
-        .publish(&env);
+        ApproverRemovedEvent { approver, data: () }.publish(&env);
 
         Ok(())
     }
@@ -1362,7 +1333,11 @@ impl NgoRegistry {
             extend_instance_ttl(&env);
             extend_ngo_ttl(&env, &owner);
 
-            MetadataUriSetEvent { owner, metadata_uri }.publish(&env);
+            MetadataUriSetEvent {
+                owner,
+                metadata_uri,
+            }
+            .publish(&env);
         }
 
         Ok(())
@@ -1647,11 +1622,7 @@ impl NgoRegistry {
     ///
     /// client.batch_approve(&admin, &vec![&env, a, b]);
     /// ```
-    pub fn batch_approve(
-        env: Env,
-        approver: Address,
-        owners: Vec<Address>,
-    ) -> Result<(), Error> {
+    pub fn batch_approve(env: Env, approver: Address, owners: Vec<Address>) -> Result<(), Error> {
         require_approver(&env, &approver)?;
         for ngo_owner in owners.iter() {
             approve_registered_ngo(&env, ngo_owner)?;

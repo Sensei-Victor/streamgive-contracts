@@ -2,8 +2,9 @@
 #![no_std]
 use soroban_sdk::{
     contract, contractclient, contracterror, contractevent, contractimpl, contracttype, token,
-    Address, Bytes, BytesN, Env, Map, String, Vec,
+    Address, Bytes, BytesN, Env, Map, Vec,
 };
+use streamgive_types::Ngo;
 
 #[contractevent(topics = ["propadmin"], data_format = "single-value")]
 pub struct ProposedAdminEvent {
@@ -254,26 +255,13 @@ pub struct PendingUpgrade {
 
 mod math;
 
-/// Mirrors ngo-registry's `Ngo` record for cross-contract calls. Declared
-/// locally rather than imported from the `ngo-registry` crate: depending on
-/// its source directly would pull that crate's own `#[contractimpl]` exports
-/// into this contract's Wasm link unit, colliding with this contract's
-/// identically-named entry points (`admin`, `init`, `upgrade`, ...).
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct NgoRecord {
-    pub owner: Address,
-    pub name: String,
-    pub verified: bool,
-}
-
 /// Thin cross-contract interface onto the configured ngo-registry contract.
-/// Only the one method `create_stream` needs. See `NgoRecord` for why this
-/// isn't just imported from the `ngo-registry` crate.
+/// Only the one method `create_stream` needs. The `Ngo` type comes from
+/// `streamgive-types` so both contracts share a single definition.
 #[contractclient(name = "NgoRegistryClient")]
 #[allow(dead_code)]
 trait NgoRegistryInterface {
-    fn get_ngo(env: Env, owner: Address) -> NgoRecord;
+    fn get_ngo(env: Env, owner: Address) -> Ngo;
 }
 
 /// A single donor -> NGO streaming donation.
@@ -849,7 +837,10 @@ fn max_rate_cap(env: &Env) -> Option<i128> {
 /// (the default) means no minimum is enforced, so the check in
 /// `create_stream` and `modify_rate` is skipped entirely. See issue #340.
 fn min_duration_seconds(env: &Env) -> u64 {
-    env.storage().instance().get(&DataKey::MinDuration).unwrap_or(0)
+    env.storage()
+        .instance()
+        .get(&DataKey::MinDuration)
+        .unwrap_or(0)
 }
 
 /// Returns true when a stream holding `balance` at a per-second `rate` would
@@ -978,6 +969,7 @@ fn settle(env: &Env, stream_id: u64, stream: &mut Stream, now: u64) -> Result<i1
 /// accrues — or `None` for a stream that begins accruing immediately, in which
 /// case it defaults to the current ledger time (issue #337). `memo` is the
 /// donor's optional tag, empty when none was supplied (issue #341).
+#[allow(clippy::too_many_arguments)]
 fn create_stream_inner(
     env: Env,
     donor: Address,
@@ -1567,7 +1559,7 @@ impl DonationVault {
         if start >= ngo_streams.len() {
             return ids;
         }
-        let end = (start as u32).saturating_add(capped).min(ngo_streams.len());
+        let end = start.saturating_add(capped).min(ngo_streams.len());
         for i in start..end {
             if let Some(id) = ngo_streams.get(i) {
                 ids.push_back(id);
@@ -2706,7 +2698,16 @@ impl DonationVault {
         deposit: i128,
         rate: i128,
     ) -> Result<u64, Error> {
-        create_stream_inner(env, donor, ngo, token, deposit, rate, None, Bytes::new(&env))
+        create_stream_inner(
+            env.clone(),
+            donor,
+            ngo,
+            token,
+            deposit,
+            rate,
+            None,
+            Bytes::new(&env),
+        )
     }
 
     /// Creates a stream with a cliff: it stays idle until `start`, so nothing
@@ -2765,7 +2766,16 @@ impl DonationVault {
         rate: i128,
         start: u64,
     ) -> Result<u64, Error> {
-        create_stream_inner(env, donor, ngo, token, deposit, rate, Some(start), Bytes::new(&env))
+        create_stream_inner(
+            env.clone(),
+            donor,
+            ngo,
+            token,
+            deposit,
+            rate,
+            Some(start),
+            Bytes::new(&env),
+        )
     }
 
     /// Creates a stream that begins accruing immediately, tagged with an
@@ -3776,7 +3786,7 @@ impl DonationVault {
         env.storage().persistent().set(&key, &stream);
 
         let old_key = DataKey::NgoStreams(old_ngo.clone());
-        if let Some(mut old_streams) = env.storage().persistent().get::<_, Vec<u64>>(&old_key) {
+        if let Some(old_streams) = env.storage().persistent().get::<_, Vec<u64>>(&old_key) {
             let mut remaining = Vec::new(&env);
             for id in old_streams.iter() {
                 if id != stream_id {

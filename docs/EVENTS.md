@@ -768,3 +768,27 @@ part of the call (subject to the same protocol-fee split as `withdraw`),
 without emitting a separate `withdraw` event; `settled` reports that gross
 amount settled to `old_ngo`. After this event, future accrual goes to the
 `new_ngo` in `data`. The donor and the stream's balance and rate are unchanged.
+
+### `strmpause`
+
+Emitted by `pause_stream` when a donor pauses a stream. Any accrued amount is
+settled first; the event reports that gross amount without emitting a separate
+`withdraw` event.
+
+| | |
+|---|---|
+| Topics | `("strmpause", stream_id: u64)` |
+| Data | `settled: i128` |
+
+If settling empties the stream, a `drained` event is emitted before
+`strmpause`, and the stream remains `Drained` rather than becoming `Paused`.
+
+### `strmresume`
+
+Emitted by `resume_stream` when a donor resumes a paused stream. Accrual starts
+again from the resume time; time spent paused does not accrue.
+
+| | |
+|---|---|
+| Topics | `("strmresume", stream_id: u64)` |
+| Data | `()` (no payload) |

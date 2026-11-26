@@ -12,6 +12,7 @@ testing, deployment, pausing, and error codes, see the
 | [ROLES.md](./ROLES.md) | Every public entry point of both contracts and the role (admin, approver, donor, NGO, anyone) it requires. |
 | [API.md](./API.md) | Public function reference: arguments, authorization, errors, and events for every entry point. |
 | [EVENTS.md](./EVENTS.md) | Every event the contracts publish, with its topics and data shape, for writing an indexer. |
+| [INDEXING.md](./INDEXING.md) | Event ordering, replay/idempotency guidance, stream lifecycle, and an event-based state rebuild example. |
 | [FEES.md](./FEES.md) | How the protocol fee is calculated, rounded, and paid to the treasury, with worked examples. |
 | [STORAGE.md](./STORAGE.md) | Which storage type each `DataKey` uses, the TTL policy, and the keep-alive entry points that prevent archival. |
 | [GLOSSARY.md](./GLOSSARY.md) | Precise definitions and examples for terms used in the stream lifecycle. |

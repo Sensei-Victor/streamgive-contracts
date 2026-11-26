@@ -12,6 +12,10 @@ This project does not yet follow a formal versioning scheme — each contract's
 
 ### Added
 
+- `donation-vault`: bounded `cancel_streams` entry point so a donor can cancel
+  several streams in one transaction, with one authorization and one refund
+  per stream. Rejects foreign or already-cancelled streams and is
+  all-or-nothing. Adds `Error::NotStreamOwner` (code 40).
 - `donation-vault`: contract skeleton with stream storage schema.
 - `donation-vault`: `create_stream`, `withdraw`, `cancel_stream`, `top_up`,
   and `modify_rate` for the streaming donation lifecycle.

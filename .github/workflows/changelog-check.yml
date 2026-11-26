@@ -1,0 +1,78 @@
+name: Changelog check
+
+# Runs from the base branch's copy of this file (pull_request_target), so a
+# contributor cannot bypass the check by editing the workflow in their PR.
+# This job only reads PR metadata via the GitHub API — it never checks out or
+# runs any code from the PR branch.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+concurrency:
+  group: changelog-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  changelog-check:
+    name: Changelog entry required
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          retries: 3
+          script: |
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request;
+            const sha = pr.head.sha;
+            const CONTEXT = 'Changelog check';
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const setStatus = (state, description) =>
+              github.rest.repos.createCommitStatus({
+                owner, repo, sha, state, context: CONTEXT,
+                description: description.slice(0, 140),
+                target_url: runUrl,
+              });
+
+            await setStatus('pending', 'Checking for a CHANGELOG.md entry');
+
+            // Opt-out: a maintainer can apply this label to skip the check.
+            const SKIP_LABEL = 'skip-changelog';
+            const labels = (pr.labels || []).map(l => l.name);
+            if (labels.includes(SKIP_LABEL)) {
+              await setStatus('success', `Skipped via the '${SKIP_LABEL}' label`);
+              return;
+            }
+
+            // Fetch the list of changed files (up to 300 — plenty for this repo).
+            const files = await github.paginate(
+              github.rest.pulls.listFiles,
+              { owner, repo, pull_number: pr.number, per_page: 100 },
+            );
+
+            const contractsChanged = files.some(f => f.filename.startsWith('contracts/'));
+            if (!contractsChanged) {
+              await setStatus('success', 'No contract files changed — no changelog entry needed');
+              return;
+            }
+
+            const changelogUpdated = files.some(f => f.filename === 'CHANGELOG.md');
+            if (changelogUpdated) {
+              await setStatus('success', 'CHANGELOG.md updated');
+              return;
+            }
+
+            await setStatus(
+              'failure',
+              'Contract files changed but CHANGELOG.md was not updated. ' +
+              `Add an entry or apply the '${SKIP_LABEL}' label to skip.`,
+            );
+            core.setFailed(
+              'Contract files changed but CHANGELOG.md was not updated. ' +
+              `Add an entry or apply the '${SKIP_LABEL}' label to skip.`,
+            );

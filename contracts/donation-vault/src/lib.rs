@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #![no_std]
 use soroban_sdk::{
-    contract, contractclient, contracterror, contractevent, contractimpl, contracttype, token,
-    Address, Bytes, BytesN, Env, Map, String, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, token,
+    Address, Bytes, BytesN, Env, IntoVal, Map, String, Vec,
 };
 
 #[contractevent(topics = ["propadmin"], data_format = "single-value")]
@@ -213,6 +213,15 @@ pub struct UpgradedEvent {
     pub new_wasm_hash: BytesN<32>,
 }
 
+/// Emitted by `execute_upgrade` with the full configuration in force as the
+/// upgraded code takes over (issue #443). New code may introduce settings that
+/// take their defaults silently; this gives indexers an explicit baseline
+/// for the new contract version instead of leaving them to infer it.
+#[contractevent(topics = ["config_snapshot"], data_format = "single-value")]
+pub struct ConfigSnapshotEvent {
+    pub config: Config,
+}
+
 #[contractevent(topics = ["uppropose"], data_format = "single-value")]
 pub struct UpgradeProposedEvent {
     #[topic]
@@ -265,15 +274,6 @@ pub struct NgoRecord {
     pub owner: Address,
     pub name: String,
     pub verified: bool,
-}
-
-/// Thin cross-contract interface onto the configured ngo-registry contract.
-/// Only the one method `create_stream` needs. See `NgoRecord` for why this
-/// isn't just imported from the `ngo-registry` crate.
-#[contractclient(name = "NgoRegistryClient")]
-#[allow(dead_code)]
-trait NgoRegistryInterface {
-    fn get_ngo(env: Env, owner: Address) -> NgoRecord;
 }
 
 /// A single donor -> NGO streaming donation.
@@ -555,6 +555,10 @@ pub enum Error {
     /// `modify_rate` before any funds move. Distinct from `InvalidAmount`,
     /// which only covers a zero or negative amount. See issue #340.
     StreamTooShort = 39,
+    /// `cancel_streams` was given a stream belonging to a different donor.
+    /// A batch is all-or-nothing, so a single foreign stream rejects the
+    /// whole call rather than cancelling the caller's streams around it.
+    NotStreamOwner = 40,
     // Error numbers are append-only: never renumber, reuse, or remove a
     // variant. New errors take the next unused number. See
     // docs/UPGRADE_POLICY.md.
@@ -567,6 +571,11 @@ pub const MAX_BATCH_GET_STREAMS: u32 = 40;
 /// Maximum number of streams that can be withdrawn in a single `withdraw_batch` call.
 /// Chosen to stay well within Soroban's per-transaction CPU and footprint budget.
 pub const MAX_BATCH_WITHDRAW_STREAMS: u32 = 20;
+
+/// Maximum number of streams that can be cancelled in a single `cancel_streams`
+/// call. Matches `MAX_BATCH_WITHDRAW_STREAMS`: a batch cancel settles each
+/// stream and refunds it, so it has the same per-stream CPU and footprint cost.
+pub const MAX_BATCH_CANCEL_STREAMS: u32 = 20;
 
 /// Maximum number of NGO stream ids returned by `streams_by_ngo` in one page.
 pub const MAX_STREAMS_BY_NGO: u32 = 100;
@@ -726,9 +735,12 @@ fn require_verified_ngo(env: &Env, ngo: &Address) -> Result<(), Error> {
         .instance()
         .get::<_, Address>(&DataKey::Registry)
     {
-        let registry = NgoRegistryClient::new(env, &registry_addr);
-        let ngo_entry = registry
-            .try_get_ngo(ngo)
+        let ngo_entry = env
+            .try_invoke_contract::<NgoRecord, soroban_sdk::Error>(
+                &registry_addr,
+                &symbol_short!("get_ngo"),
+                soroban_sdk::vec![env, ngo.clone().into_val(env)],
+            )
             .map_err(|_| Error::NgoNotVerified)?
             .map_err(|_| Error::NgoNotVerified)?;
         if !ngo_entry.verified {
@@ -849,7 +861,10 @@ fn max_rate_cap(env: &Env) -> Option<i128> {
 /// (the default) means no minimum is enforced, so the check in
 /// `create_stream` and `modify_rate` is skipped entirely. See issue #340.
 fn min_duration_seconds(env: &Env) -> u64 {
-    env.storage().instance().get(&DataKey::MinDuration).unwrap_or(0)
+    env.storage()
+        .instance()
+        .get(&DataKey::MinDuration)
+        .unwrap_or(0)
 }
 
 /// Returns true when a stream holding `balance` at a per-second `rate` would
@@ -970,6 +985,61 @@ fn settle(env: &Env, stream_id: u64, stream: &mut Stream, now: u64) -> Result<i1
     Ok(accrued)
 }
 
+/// Shared implementation behind `cancel_stream` and `cancel_streams`: settles
+/// whatever has accrued on `stream` to the NGO, refunds the untouched
+/// remainder to the donor, and leaves the stream zeroed and marked cancelled.
+///
+/// The caller has already loaded the stream, authorised its donor, and
+/// rejected an already-cancelled stream. Keeping the body here means the
+/// single and batch entry points cannot drift on settlement, refund,
+/// committed-balance accounting, TTL retention, or event emission.
+fn cancel_stream_inner(
+    env: &Env,
+    stream_id: u64,
+    mut stream: Stream,
+    now: u64,
+    grace_ledgers: u32,
+) -> Result<i128, Error> {
+    let accrued = settle_core(env, &mut stream, now)?;
+
+    let refund = stream.balance;
+
+    // Update state before the external token transfer
+    stream.balance = 0;
+    stream.rate = 0;
+    stream.cancelled = true;
+    stream.last_update = now;
+    stream.status = StreamStatus::Cancelled;
+    env.storage()
+        .persistent()
+        .set(&DataKey::Stream(stream_id), &stream);
+    extend_cancelled_stream_ttl(env, stream_id, grace_ledgers)?;
+
+    // External token transfer is the last step
+    let token_client = token::Client::new(env, &stream.token);
+    if refund > 0 {
+        // `settle_core` already dropped the accrued payout from the committed
+        // balance; the refunded remainder leaves it here (issue #346).
+        add_committed(env, &stream.token, -refund)?;
+        token_client.transfer(&env.current_contract_address(), &stream.donor, &refund);
+    }
+
+    // Only emit the cancel event when something actually moved. When both
+    // values are zero the stream was already cancelled — emitting here would
+    // produce a duplicate that an indexer can't distinguish from a real
+    // cancellation (see issue #91).
+    if accrued > 0 || refund > 0 {
+        CancelledStreamEvent {
+            stream_id,
+            accrued,
+            refund,
+        }
+        .publish(env);
+    }
+
+    Ok(refund)
+}
+
 /// Shared implementation behind `create_stream`, `create_stream_with_start`,
 /// and `create_stream_with_memo`: validates the arguments, records the stream,
 /// and pulls the deposit into the vault.
@@ -978,6 +1048,7 @@ fn settle(env: &Env, stream_id: u64, stream: &mut Stream, now: u64) -> Result<i1
 /// accrues — or `None` for a stream that begins accruing immediately, in which
 /// case it defaults to the current ledger time (issue #337). `memo` is the
 /// donor's optional tag, empty when none was supplied (issue #341).
+#[allow(clippy::too_many_arguments)]
 fn create_stream_inner(
     env: Env,
     donor: Address,
@@ -1554,6 +1625,19 @@ impl DonationVault {
         ids
     }
 
+    /// Returns the per-donor stream counter used to enforce the stream cap.
+    ///
+    /// This is the same counter checked by `create_stream`. It is incremented
+    /// when a stream is created and never decremented, so cancelled streams
+    /// still count toward the donor's limit. Returns `0` for donors that have
+    /// never created a stream.
+    pub fn donor_stream_count(env: Env, donor: Address) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::DonorStreamCount(donor))
+            .unwrap_or(0)
+    }
+
     /// Lists stream ids associated with an NGO in creation order.
     /// Results are bounded by `limit`, which is clamped to `MAX_STREAMS_BY_NGO`.
     pub fn streams_by_ngo(env: Env, ngo: Address, start: u32, limit: u32) -> Vec<u64> {
@@ -1567,7 +1651,7 @@ impl DonationVault {
         if start >= ngo_streams.len() {
             return ids;
         }
-        let end = (start as u32).saturating_add(capped).min(ngo_streams.len());
+        let end = start.saturating_add(capped).min(ngo_streams.len());
         for i in start..end {
             if let Some(id) = ngo_streams.get(i) {
                 ids.push_back(id);
@@ -2706,7 +2790,8 @@ impl DonationVault {
         deposit: i128,
         rate: i128,
     ) -> Result<u64, Error> {
-        create_stream_inner(env, donor, ngo, token, deposit, rate, None, Bytes::new(&env))
+        let memo = Bytes::new(&env);
+        create_stream_inner(env, donor, ngo, token, deposit, rate, None, memo)
     }
 
     /// Creates a stream with a cliff: it stays idle until `start`, so nothing
@@ -2765,7 +2850,8 @@ impl DonationVault {
         rate: i128,
         start: u64,
     ) -> Result<u64, Error> {
-        create_stream_inner(env, donor, ngo, token, deposit, rate, Some(start), Bytes::new(&env))
+        let memo = Bytes::new(&env);
+        create_stream_inner(env, donor, ngo, token, deposit, rate, Some(start), memo)
     }
 
     /// Creates a stream that begins accruing immediately, tagged with an
@@ -2870,6 +2956,11 @@ impl DonationVault {
         if stream.status != StreamStatus::Paused {
             return Err(Error::StreamNotPaused);
         }
+
+        // Re-check that the NGO is still verified before resuming accrual.
+        // A donor must not be able to restart payments to an NGO whose
+        // verification was revoked while the stream was paused.
+        require_verified_ngo(&env, &stream.ngo)?;
 
         stream.status = StreamStatus::Active;
         stream.last_update = env.ledger().timestamp();
@@ -3363,7 +3454,7 @@ impl DonationVault {
     /// ```
     pub fn cancel_stream(env: Env, stream_id: u64) -> Result<i128, Error> {
         let key = DataKey::Stream(stream_id);
-        let mut stream: Stream = env
+        let stream: Stream = env
             .storage()
             .persistent()
             .get(&key)
@@ -3377,48 +3468,139 @@ impl DonationVault {
         }
 
         let now = env.ledger().timestamp();
-        let accrued = settle_core(&env, &mut stream, now)?;
-
-        let refund = stream.balance;
-
-        // Update state before the external token transfer
-        stream.balance = 0;
-        stream.rate = 0;
-        stream.cancelled = true;
-        stream.last_update = now;
-        stream.status = StreamStatus::Cancelled;
-        env.storage().persistent().set(&key, &stream);
-        extend_instance_ttl(&env);
         let grace_ledgers = env
             .storage()
             .instance()
             .get(&DataKey::CancelGraceLedgers)
             .unwrap_or(0);
-        extend_cancelled_stream_ttl(&env, stream_id, grace_ledgers)?;
+        extend_instance_ttl(&env);
 
-        // External token transfer is the last step
-        let token_client = token::Client::new(&env, &stream.token);
-        if refund > 0 {
-            // `settle` already dropped the accrued payout from the committed
-            // balance; the refunded remainder leaves it here (issue #346).
-            add_committed(&env, &stream.token, -refund)?;
-            token_client.transfer(&env.current_contract_address(), &stream.donor, &refund);
+        cancel_stream_inner(&env, stream_id, stream, now, grace_ledgers)
+    }
+
+    /// Cancels several of one donor's streams in a single transaction,
+    /// settling and refunding each one exactly as `cancel_stream` would. The
+    /// donor authorizes the call once, instead of signing and paying a
+    /// separate fee per stream.
+    ///
+    /// The batch is all-or-nothing: every id is checked before any stream is
+    /// settled or any token moves, so one unknown id, an already-cancelled
+    /// stream, or a stream belonging to another donor rejects the whole call
+    /// with no partial cancellation.
+    ///
+    /// Returns `Error::BatchLimitExceeded` if more than
+    /// `MAX_BATCH_CANCEL_STREAMS` ids are provided, `Error::DuplicateStreamId`
+    /// if the same id appears twice, `Error::StreamNotFound` for an unknown id,
+    /// `Error::StreamCancelled` for a stream already closed out, and
+    /// `Error::NotStreamOwner` if any stream belongs to a different donor.
+    ///
+    /// Returns the refund for each input stream, in the same order as
+    /// `stream_ids`. Like `cancel_stream`, it works while the vault is paused.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use soroban_sdk::{testutils::{Address as _, Ledger}, token, Address, Env, Vec};
+    /// # use donation_vault::{DonationVault, DonationVaultClient};
+    /// # let env = Env::default();
+    /// # env.mock_all_auths();
+    /// # let contract_id = env.register(DonationVault, ());
+    /// # let client = DonationVaultClient::new(&env, &contract_id);
+    /// # let admin = Address::generate(&env);
+    /// # client.init(&admin);
+    /// # let token_admin = Address::generate(&env);
+    /// # let sac = env.register_stellar_asset_contract_v2(token_admin.clone());
+    /// # let token_client = token::StellarAssetClient::new(&env, &sac.address());
+    /// # let donor = Address::generate(&env);
+    /// # let ngo = Address::generate(&env);
+    /// # token_client.mint(&donor, &2_000);
+    /// let a = client.create_stream(&donor, &ngo, &sac.address(), &1_000, &10);
+    /// let b = client.create_stream(&donor, &ngo, &sac.address(), &1_000, &10);
+    /// env.ledger().with_mut(|l| l.timestamp += 20); // 200 accrues on each
+    ///
+    /// let mut ids = Vec::new(&env);
+    /// ids.push_back(a);
+    /// ids.push_back(b);
+    /// let refunds = client.cancel_streams(&ids);
+    /// assert_eq!(refunds.get(0), Some(800));
+    /// assert_eq!(refunds.get(1), Some(800));
+    /// ```
+    pub fn cancel_streams(env: Env, stream_ids: Vec<u64>) -> Result<Vec<i128>, Error> {
+        if stream_ids.len() > MAX_BATCH_CANCEL_STREAMS {
+            return Err(Error::BatchLimitExceeded);
         }
 
-        // Only emit the cancel event when something actually moved. When
-        // both values are zero the stream was already cancelled — emitting
-        // here would produce a duplicate that an indexer can't distinguish
-        // from a real cancellation (see issue #91).
-        if accrued > 0 || refund > 0 {
-            CancelledStreamEvent {
-                stream_id,
-                accrued,
-                refund,
+        // A repeated id would be cancelled twice: the second pass would find it
+        // already cancelled and fail after the first refund had moved, so
+        // reject duplicates up front like `withdraw_batch` does.
+        let mut seen_ids: Map<u64, bool> = Map::new(&env);
+        for stream_id in stream_ids.iter() {
+            if seen_ids.contains_key(stream_id) {
+                return Err(Error::DuplicateStreamId);
             }
-            .publish(&env);
+            seen_ids.set(stream_id, true);
         }
 
-        Ok(refund)
+        // An empty batch is a no-op rather than an error: there is nothing to
+        // cancel and nothing to refund, so no auth is needed either.
+        if stream_ids.is_empty() {
+            return Ok(Vec::new(&env));
+        }
+
+        // First pass: validate the whole batch before anything moves, so an
+        // unknown, already-cancelled, or foreign stream aborts the call with
+        // no partial cancellation. All ids must share one donor, which
+        // authorizes the batch once.
+        let mut donor: Option<Address> = None;
+        let mut streams: Vec<Stream> = Vec::new(&env);
+        for stream_id in stream_ids.iter() {
+            let stream: Stream = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Stream(stream_id))
+                .ok_or(Error::StreamNotFound)?;
+
+            match &donor {
+                None => donor = Some(stream.donor.clone()),
+                Some(existing) if existing != &stream.donor => return Err(Error::NotStreamOwner),
+                Some(_) => {}
+            }
+
+            if stream.cancelled {
+                return Err(Error::StreamCancelled);
+            }
+
+            streams.push_back(stream);
+        }
+
+        let donor = donor.ok_or(Error::StreamNotFound)?;
+        donor.require_auth();
+
+        let now = env.ledger().timestamp();
+        let grace_ledgers = env
+            .storage()
+            .instance()
+            .get(&DataKey::CancelGraceLedgers)
+            .unwrap_or(0);
+
+        // Second pass: settle and refund each stream. Any failure here (an
+        // arithmetic overflow, a failed token transfer) aborts the whole
+        // transaction, so the batch still cannot leave a half-cancelled set.
+        let mut refunds: Vec<i128> = Vec::new(&env);
+        for (idx, stream_id) in stream_ids.iter().enumerate() {
+            let stream = streams.get(idx as u32).ok_or(Error::StreamNotFound)?;
+            refunds.push_back(cancel_stream_inner(
+                &env,
+                stream_id,
+                stream,
+                now,
+                grace_ledgers,
+            )?);
+        }
+
+        extend_instance_ttl(&env);
+
+        Ok(refunds)
     }
 
     /// Admin-only emergency escape hatch for a paused vault (issue #199).
@@ -3776,7 +3958,7 @@ impl DonationVault {
         env.storage().persistent().set(&key, &stream);
 
         let old_key = DataKey::NgoStreams(old_ngo.clone());
-        if let Some(mut old_streams) = env.storage().persistent().get::<_, Vec<u64>>(&old_key) {
+        if let Some(old_streams) = env.storage().persistent().get::<_, Vec<u64>>(&old_key) {
             let mut remaining = Vec::new(&env);
             for id in old_streams.iter() {
                 if id != stream_id {
@@ -3884,7 +4066,8 @@ impl DonationVault {
     }
 
     /// Carries out the upgrade proposed by `propose_upgrade`, replacing the
-    /// contract's Wasm bytecode in place. Admin-gated; emits an `upgrade`
+    /// contract's Wasm bytecode in place. Admin-gated; emits a
+    /// `config_snapshot` of the current configuration followed by an `upgrade`
     /// event. Fails with `NoPendingUpgrade` when nothing is proposed, and with
     /// `UpgradeDelayNotElapsed` before the timelock has elapsed.
     pub fn execute_upgrade(env: Env) -> Result<(), Error> {
@@ -3902,6 +4085,13 @@ impl DonationVault {
         env.deployer()
             .update_current_contract_wasm(pending.new_wasm_hash.clone());
         extend_instance_ttl(&env);
+
+        // The upgraded code starts from this configuration; publish it before
+        // the `upgrade` event so that event remains the call's last one.
+        ConfigSnapshotEvent {
+            config: DonationVault::get_config(env.clone()),
+        }
+        .publish(&env);
 
         UpgradedEvent {
             new_wasm_hash: pending.new_wasm_hash,

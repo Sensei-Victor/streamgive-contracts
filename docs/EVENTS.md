@@ -2,7 +2,7 @@
 
 Every event published by the contracts in this repo, with its topics and
 data shape, so an indexer can be written directly against this repo without
-going to `streamgisve-docs` first.
+going to the external documentation site first.
 
 Soroban events have two parts:
 
@@ -17,22 +17,52 @@ The contracts define migrated event declarations with Soroban SDK's
 layout stable. Event type names include `RegisterEvent`, `RenamedEvent`,
 `ApprovedEvent`, `RevokedEvent`, `UnregisteredEvent`, `RemovedEvent`,
 `ProposedAdminEvent`, `AcceptedAdminEvent`, `CancelledAdminEvent`,
-`PausedEvent`, `UnpausedEvent`, `TreasurySetEvent`, `TreasuryClearedEvent`,
+`PausedEvent`, `UnpausedEvent`, `RenouncedAdminEvent`, `TreasurySetEvent`, `TreasuryClearedEvent`,
 `FeeBpsSetEvent`, `TokenFeeBpsSetEvent`, `TokenFeeBpsClearedEvent`,
 `MinDepositSetEvent`, `CancelGraceLedgersSetEvent`, `RegistrySetEvent`,
 `PayoutAddressSetEvent`, `MaxStreamsPerDonorSetEvent`, `MaxRateSetEvent`,
 `MaxRateClearedEvent`, `InitializedEvent`,
-`UpgradedEvent`, `UpgradeProposedEvent`, `UpgradeCancelledEvent`,
-`UpgradeDelaySetEvent`, `ApproverAddedEvent`, `ApproverRemovedEvent`,
+`UpgradedEvent`, `ConfigSnapshotEvent`, `UpgradeProposedEvent`,
+`UpgradeCancelledEvent`, `UpgradeDelaySetEvent`, `ApproverAddedEvent`,
+`ApproverRemovedEvent`,
 `MetadataUriSetEvent`, `RenewedEvent`, `VerifyPeriodSetEvent`, `CreatedEvent`,
 `WithdrawnEvent`, `DrainedEvent`, `CancelledStreamEvent`, `RescuedStreamEvent`,
-`ToppedUpEvent`, `RateModifiedEvent`, and `SurplusSweptEvent`.
+`ToppedUpEvent`, `RateModifiedEvent`, `TransferStreamEvent`,
+`PausedStreamEvent`, `ResumedStreamEvent`, and `SurplusSweptEvent`.
 
 `Address`, `i128`, `u64`, `u32`, `bool`, and `String` are the standard
 Soroban SDK/XDR types (`Address` is the SDK's account/contract address
 type, `String` is `soroban_sdk::String`).
 
 ## `ngo-registry`
+
+### `propadmin`
+
+Emitted by `propose_admin` when the registry admin nominates a replacement.
+
+| | |
+|---|---|
+| Topics | `("propadmin",)` |
+| Data | `new_admin: Address` |
+
+### `acptadmin`
+
+Emitted by `accept_admin` when the pending registry admin takes control.
+
+| | |
+|---|---|
+| Topics | `("acptadmin",)` |
+| Data | `new_admin: Address` |
+
+### `canceladm`
+
+Emitted by `cancel_admin_proposal` when the registry admin cancels the pending
+transfer.
+
+| | |
+|---|---|
+| Topics | `("canceladm",)` |
+| Data | `()` (no payload) |
 
 ### `register`
 
@@ -45,6 +75,15 @@ Emitted by `register` when an NGO submits an application.
 
 The entry starts unverified (`verified: false`); look for a matching
 `approved` event for the same `owner` to know when it's live.
+
+### `unregist`
+
+Emitted by `unregister` when an unverified NGO removes its own application.
+
+| | |
+|---|---|
+| Topics | `("unregist", owner: Address)` |
+| Data | `()` (no payload) |
 
 ### `renamed`
 
@@ -243,6 +282,25 @@ admin has no further authority.
 | Topics | `("acptadmin",)` |
 | Data | `new_admin: Address` |
 
+### `canceladm`
+
+Emitted by `cancel_admin_proposal` when the current admin clears a pending
+admin transfer.
+
+| | |
+|---|---|
+| Topics | `("canceladm",)` |
+| Data | `()` (no payload) |
+
+### `renounce`
+
+Emitted by `renounce_admin` when admin control is permanently disabled.
+
+| | |
+|---|---|
+| Topics | `("renounce",)` |
+| Data | `()` (no payload) |
+
 ### `pause`
 
 Emitted by `pause` when an admin halts stream creation, withdrawal, top-up,
@@ -342,6 +400,19 @@ Emitted by `set_min_deposit` when an admin changes the minimum stream deposit.
 The event carries the full new value so an indexer can track the minimum
 without polling `min_deposit()`. A negative value fails with `InvalidAmount`
 and emits nothing.
+
+### `maxstrm`
+
+Emitted by `set_max_streams_per_donor` when the lifetime per-donor creation
+cap changes.
+
+| | |
+|---|---|
+| Topics | `("maxstrm",)` |
+| Data | `limit: u64` |
+
+The cap is checked before the donor's token transfer. Existing streams are not
+deleted when the cap changes; the stored counter is a lifetime creation count.
 
 ### `grceset`
 
@@ -453,6 +524,25 @@ configured `upgrade_delay` of zero). With a non-zero delay it returns
 `Error::UpgradeTimelockEnabled`, and the code change happens through
 `execute_upgrade` instead (#343).
 
+### `config_snapshot`
+
+Emitted by `execute_upgrade` just before its `upgrade` event, carrying the
+full configuration in force as the upgraded code takes over. Settings newly
+introduced by an upgrade take their defaults silently; this event gives an
+indexer a known starting point for the new contract version instead of
+leaving it to infer when a value changed (#443).
+
+| | |
+|---|---|
+| Topics | `("config_snapshot",)` |
+| Data | `config: Config` (the same struct returned by `get_config`) |
+
+The payload includes `paused`, `treasury`, `fee_bps`, `min_deposit`,
+`max_streams_per_donor`, `max_rate`, `min_duration`, `registry`,
+`cancel_grace_ledgers`, `total_donated`, `total_withdrawn`,
+`total_fees_collected`, `pending_admin`, and `renounced`. It is published only
+by `execute_upgrade`; the immediate `upgrade` entry point does not emit one.
+
 ### `uppropose`
 
 Emitted by `propose_upgrade` when an admin records the Wasm hash to upgrade to
@@ -505,6 +595,18 @@ of stream balances the vault holds), so a sweep can never touch funds belonging
 to streams. `treasury` is the payout address the surplus went to. An indexer can
 reconstruct the recoverable surplus at any time as the vault's token balance
 minus `committed_balance(token)` (#346).
+
+### `rescue`
+
+Emitted by `rescue_stream` when the paused-vault emergency path refunds a
+stream's remaining balance to its donor and permanently cancels it.
+
+| | |
+|---|---|
+| Topics | `("rescue", stream_id: u64)` |
+| Data | `refund: i128` |
+
+The call is admin-only and fails with `NotPaused` unless the vault is paused.
 
 ### `created`
 
@@ -568,6 +670,9 @@ a drain.
 ### `cancel`
 
 Emitted by `cancel_stream` when a donor stops a stream for good.
+`cancel_streams` emits one of these per stream it cancels, with the same
+topics and data, so an indexer handles single and batch cancellations
+identically.
 
 | | |
 |---|---|
@@ -608,7 +713,7 @@ the NGO first, so the new rate only ever applies going forward. `settled` report
 the gross amount settled to the NGO at the old rate. The event records both rates
 so an indexer can calculate the change without another state query.
 
-### `transfer`
+### `transfer_stream`
 
 Emitted by `transfer_stream` when a donor reassigns an ongoing stream to a
 different NGO.
@@ -623,12 +728,3 @@ part of the call (subject to the same protocol-fee split as `withdraw`),
 without emitting a separate `withdraw` event; `settled` reports that gross
 amount settled to `old_ngo`. After this event, future accrual goes to the
 `new_ngo` in `data`. The donor and the stream's balance and rate are unchanged.
-
-### `unregist`
-
-Emitted by `ngo-registry` when an unverified NGO removes its own application.
-
-| | |
-|---|---|
-| Topics | `("unregist", owner: Address)` |
-| Data | `()` (no payload) |

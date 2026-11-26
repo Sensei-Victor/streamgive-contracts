@@ -114,7 +114,7 @@ pub struct VerifyPeriodSetEvent {
 }
 
 #[contracttype]
-// Debug and PartialEq let tests assert_eq! on a try_* call’s full
+// Debug and PartialEq let tests assert_eq! on a try_* callâ€™s full
 // Result<Result<Ngo, _>, _> rather than unwrapping it by hand first.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Ngo {
@@ -395,8 +395,8 @@ fn validate_name(name: &String) -> Result<(), Error> {
 ///
 /// `None` is always allowed. `Some` must be at most `MAX_METADATA_URI_LEN`
 /// (512 bytes) or the call fails with `Error::MetadataUriTooLong`. The URI is
-/// opaque to the contract — an `https://`, `ipfs://`, or any other scheme is
-/// accepted — so only the length is enforced. See issue #347.
+/// opaque to the contract â€” an `https://`, `ipfs://`, or any other scheme is
+/// accepted â€” so only the length is enforced. See issue #347.
 fn validate_metadata_uri(uri: &Option<String>) -> Result<(), Error> {
     if let Some(u) = uri {
         if u.len() > MAX_METADATA_URI_LEN {
@@ -505,7 +505,7 @@ fn approve_registered_ngo(env: &Env, ngo_owner: Address) -> Result<(), Error> {
 /// shrinking the live counts. Shared by `unregister` (owner-initiated),
 /// `remove_ngo` (admin-initiated) and `reject_ngo` (reviewer-initiated); the
 /// caller is responsible for authorizing the call and for the
-/// verified/unverified check. Does not touch the instance TTL — the caller
+/// verified/unverified check. Does not touch the instance TTL â€” the caller
 /// decides whether to bump it. Decrements `NgoCount`, and `VerifiedCount` when
 /// the entry being removed was verified, using checked subtraction and
 /// returning `Error::ArithmeticOverflow` on underflow.
@@ -945,7 +945,7 @@ impl NgoRegistry {
     /// its clients); the contract keeps no record of it beyond the event.
     ///
     /// Returns `Error::NotRegistered` for an address with no entry. A verified
-    /// NGO cannot be rejected — an approval is undone with `revoke_ngo` first —
+    /// NGO cannot be rejected â€” an approval is undone with `revoke_ngo` first â€”
     /// and fails with `Error::AlreadyVerified`. An address that is neither the
     /// admin nor a listed approver fails with `Error::NotApprover`.
     ///
@@ -1033,11 +1033,7 @@ impl NgoRegistry {
             .set(&DataKey::Approvers, &approvers);
         extend_instance_ttl(&env);
 
-        ApproverAddedEvent {
-            approver,
-            data: (),
-        }
-        .publish(&env);
+        ApproverAddedEvent { approver, data: () }.publish(&env);
 
         Ok(())
     }
@@ -1084,11 +1080,7 @@ impl NgoRegistry {
             .set(&DataKey::Approvers, &remaining);
         extend_instance_ttl(&env);
 
-        ApproverRemovedEvent {
-            approver,
-            data: (),
-        }
-        .publish(&env);
+        ApproverRemovedEvent { approver, data: () }.publish(&env);
 
         Ok(())
     }
@@ -1258,7 +1250,7 @@ impl NgoRegistry {
     /// rename can be fixed without going through an admin. Requires the
     /// owner's auth. Fails with `Error::NotRegistered` for an address with
     /// no entry, and `Error::AlreadyVerified` once an admin has approved
-    /// it — the name an admin approved is the name that stays.
+    /// it â€” the name an admin approved is the name that stays.
     ///
     /// The new name must meet the same validation rules as in `register`: at most
     /// 200 bytes, valid UTF-8, at least one visible character, and no control characters.
@@ -1313,8 +1305,8 @@ impl NgoRegistry {
     /// or logo. Requires the owner's auth; the entry must already be
     /// registered, or the call fails with `Error::NotRegistered`.
     ///
-    /// The URI is opaque to the contract — any scheme (`https://`, `ipfs://`,
-    /// …) is accepted — and must be at most `MAX_METADATA_URI_LEN` (512 bytes),
+    /// The URI is opaque to the contract â€” any scheme (`https://`, `ipfs://`,
+    /// â€¦) is accepted â€” and must be at most `MAX_METADATA_URI_LEN` (512 bytes),
     /// or the call fails with `Error::MetadataUriTooLong`. Pass `None` to clear
     /// it. Unlike `update_name`, this is not locked by verification: an NGO can
     /// keep its published metadata current after approval. Publishes a
@@ -1362,7 +1354,11 @@ impl NgoRegistry {
             extend_instance_ttl(&env);
             extend_ngo_ttl(&env, &owner);
 
-            MetadataUriSetEvent { owner, metadata_uri }.publish(&env);
+            MetadataUriSetEvent {
+                owner,
+                metadata_uri,
+            }
+            .publish(&env);
         }
 
         Ok(())
@@ -1647,11 +1643,7 @@ impl NgoRegistry {
     ///
     /// client.batch_approve(&admin, &vec![&env, a, b]);
     /// ```
-    pub fn batch_approve(
-        env: Env,
-        approver: Address,
-        owners: Vec<Address>,
-    ) -> Result<(), Error> {
+    pub fn batch_approve(env: Env, approver: Address, owners: Vec<Address>) -> Result<(), Error> {
         require_approver(&env, &approver)?;
         for ngo_owner in owners.iter() {
             approve_registered_ngo(&env, ngo_owner)?;
@@ -1720,7 +1712,7 @@ impl NgoRegistry {
         Ok(())
     }
 
-    /// Extends a lapsed — or still-valid — verification by the configured
+    /// Extends a lapsed â€” or still-valid â€” verification by the configured
     /// period, moving its `verified_until` forward from the current ledger
     /// time. Admin-only.
     ///
@@ -1793,7 +1785,7 @@ impl NgoRegistry {
     }
 
     /// Bumps a registered NGO entry's storage TTL without changing
-    /// anything about it. Callable by anyone — a verified NGO that
+    /// anything about it. Callable by anyone â€” a verified NGO that
     /// `register`, `approve_ngo`, and `revoke_ngo` haven't touched in a
     /// while would otherwise have its entry archived after 90 days, with
     /// no other way to keep it alive.
@@ -1857,4 +1849,6 @@ impl NgoRegistry {
     }
 }
 
+#[cfg(test)]
+#[cfg(test)]
 mod test;

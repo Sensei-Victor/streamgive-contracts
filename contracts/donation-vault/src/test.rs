@@ -3208,6 +3208,269 @@ fn max_streams_per_donor_defaults_to_100() {
 }
 
 #[test]
+fn zero_decimal_token_accrual_and_fee_rounding() {
+    // 0-decimal token: 1 token = 1 unit (no fractional parts)
+    let s = setup();
+    let treasury = Address::generate(&s.env);
+    s.client.set_treasury(&treasury);
+    s.client.set_fee_bps(&250); // 2.5% fee
+
+    // Represent 1000 tokens (0 decimals) as 1000 units
+    let deposit = 1_000i128;
+    let rate = 10i128; // 10 units/second = 10 tokens/second
+    s.token_admin.mint(&s.donor, &deposit);
+
+    let stream_id = s
+        .client
+        .create_stream(&s.donor, &s.ngo, &s.token.address, &deposit, &rate);
+
+    // 50 seconds -> 500 units accrued
+    s.env.ledger().with_mut(|l| l.timestamp += 50);
+    let withdrawn = s.client.withdraw(&stream_id);
+
+    // 500 * 2.5% = 12.5 -> rounds down to 12
+    let expected_fee = 12i128;
+    let expected_net = 500 - expected_fee;
+
+    assert_eq!(withdrawn, expected_net);
+    assert_eq!(s.token.balance(&s.ngo), expected_net);
+    assert_eq!(s.token.balance(&treasury), expected_fee);
+
+    // Verify refund on cancel
+    s.env.ledger().with_mut(|l| l.timestamp += 20);
+    let refund = s.client.cancel_stream(&stream_id);
+
+    // 200 more accrues, leaves 300 to refund
+    // 200 * 2.5% = 5 fee, 195 net
+    assert_eq!(s.token.balance(&s.ngo), expected_net + 195);
+    assert_eq!(refund, 300);
+}
+
+#[test]
+fn zero_decimal_token_one_unit_per_second_minimal_fee() {
+    // Edge case: 1 unit/second with a fee
+    let s = setup();
+    let treasury = Address::generate(&s.env);
+    s.client.set_treasury(&treasury);
+    s.client.set_fee_bps(&500); // 5% fee
+
+    let deposit = 100i128;
+    let rate = 1i128; // 1 unit/second
+    s.token_admin.mint(&s.donor, &deposit);
+
+    let stream_id = s
+        .client
+        .create_stream(&s.donor, &s.ngo, &s.token.address, &deposit, &rate);
+
+    // 10 seconds -> 10 units accrued
+    s.env.ledger().with_mut(|l| l.timestamp += 10);
+    let withdrawn = s.client.withdraw(&stream_id);
+
+    // 10 * 5% = 0.5 -> rounds down to 0
+    assert_eq!(withdrawn, 10);
+    assert_eq!(s.token.balance(&s.ngo), 10);
+    assert_eq!(s.token.balance(&treasury), 0);
+}
+
+#[test]
+fn eighteen_decimal_token_accrual_and_fee_rounding() {
+    // 18-decimal token: 1 token = 10^18 units (like ETH wei)
+    let s = setup();
+    let treasury = Address::generate(&s.env);
+    s.client.set_treasury(&treasury);
+    s.client.set_fee_bps(&250); // 2.5% fee
+
+    // Represent 1000 tokens (18 decimals) as 1000 * 10^18 units
+    // Using smaller scale for test: 1000 * 10^12 = 1_000_000_000_000_000
+    let deposit = 1_000_000_000_000_000i128;
+    let rate = 10_000_000_000_000i128; // 10^13 units/second = 0.01 tokens/second
+    s.token_admin.mint(&s.donor, &deposit);
+
+    let stream_id = s
+        .client
+        .create_stream(&s.donor, &s.ngo, &s.token.address, &deposit, &rate);
+
+    // 50 seconds -> 500 * 10^12 units accrued
+    s.env.ledger().with_mut(|l| l.timestamp += 50);
+    let withdrawn = s.client.withdraw(&stream_id);
+
+    let accrued = 500_000_000_000_000i128;
+    // 500_000_000_000_000 * 2.5% = 12_500_000_000_000
+    let expected_fee = 12_500_000_000_000i128;
+    let expected_net = accrued - expected_fee;
+
+    assert_eq!(withdrawn, expected_net);
+    assert_eq!(s.token.balance(&s.ngo), expected_net);
+    assert_eq!(s.token.balance(&treasury), expected_fee);
+}
+
+#[test]
+fn eighteen_decimal_token_tiny_amounts_precise_fee() {
+    // Very small amounts with 18 decimals test fee precision
+    let s = setup();
+    let treasury = Address::generate(&s.env);
+    s.client.set_treasury(&treasury);
+    s.client.set_fee_bps(&100); // 1% fee
+
+    // 1 * 10^15 units (0.001 tokens in 18-decimal scale)
+    let deposit = 1_000_000_000_000_000i128;
+    let rate = 1_000_000_000_000i128; // 10^12 units/second
+    s.token_admin.mint(&s.donor, &deposit);
+
+    let stream_id = s
+        .client
+        .create_stream(&s.donor, &s.ngo, &s.token.address, &deposit, &rate);
+
+    // 100 seconds -> 100 * 10^12 units accrued
+    s.env.ledger().with_mut(|l| l.timestamp += 100);
+    let withdrawn = s.client.withdraw(&stream_id);
+
+    let accrued = 100_000_000_000_000i128;
+    // 100_000_000_000_000 * 1% = 1_000_000_000_000
+    let expected_fee = 1_000_000_000_000i128;
+    let expected_net = accrued - expected_fee;
+
+    assert_eq!(withdrawn, expected_net);
+    assert_eq!(s.token.balance(&s.ngo), expected_net);
+    assert_eq!(s.token.balance(&treasury), expected_fee);
+}
+
+#[test]
+fn eighteen_decimal_token_refund_precision() {
+    // Test that refunds are precise with large 18-decimal values
+    let s = setup();
+
+    let deposit = 999_999_999_999_999_999i128; // Nearly 1 token (18 decimals)
+    let rate = 1_000_000_000_000_000i128; // 10^15 units/second
+    s.token_admin.mint(&s.donor, &deposit);
+
+    let stream_id = s
+        .client
+        .create_stream(&s.donor, &s.ngo, &s.token.address, &deposit, &rate);
+
+    // 100 seconds -> 100 * 10^15 units accrue
+    s.env.ledger().with_mut(|l| l.timestamp += 100);
+
+    let refund = s.client.cancel_stream(&stream_id);
+
+    // accrued = 100_000_000_000_000_000
+    // refund = 999_999_999_999_999_999 - 100_000_000_000_000_000 = 899_999_999_999_999_999
+    let expected_accrued = 100_000_000_000_000_000i128;
+    let expected_refund = deposit - expected_accrued;
+
+    assert_eq!(refund, expected_refund);
+    assert_eq!(s.token.balance(&s.ngo), expected_accrued);
+    assert_eq!(s.token.balance(&s.donor), expected_refund);
+}
+
+#[test]
+fn zero_decimal_token_max_fee_no_underflow() {
+    // Test max fee (10%) doesn't cause underflow with 0-decimal token
+    let s = setup();
+    let treasury = Address::generate(&s.env);
+    s.client.set_treasury(&treasury);
+    s.client.set_fee_bps(&1_000); // 10% max fee
+
+    let deposit = 1_000i128;
+    let rate = 100i128; // 100 units/second
+    s.token_admin.mint(&s.donor, &deposit);
+
+    let stream_id = s
+        .client
+        .create_stream(&s.donor, &s.ngo, &s.token.address, &deposit, &rate);
+
+    // 5 seconds -> 500 units
+    s.env.ledger().with_mut(|l| l.timestamp += 5);
+    let withdrawn = s.client.withdraw(&stream_id);
+
+    // 500 * 10% = 50
+    let expected_fee = 50i128;
+    let expected_net = 450i128;
+
+    assert_eq!(withdrawn, expected_net);
+    assert_eq!(s.token.balance(&s.ngo), expected_net);
+    assert_eq!(s.token.balance(&treasury), expected_fee);
+}
+
+#[test]
+fn eighteen_decimal_token_fee_does_not_exceed_amount() {
+    // Ensure fee calculation never exceeds the actual amount
+    let s = setup();
+    let treasury = Address::generate(&s.env);
+    s.client.set_treasury(&treasury);
+    s.client.set_fee_bps(&1_000); // 10% max fee
+
+    let deposit = 1_000_000_000_000_000_000i128; // 1 token (18 decimals)
+    let rate = 1_000_000_000_000_000i128; // 10^15 units/second
+    s.token_admin.mint(&s.donor, &deposit);
+
+    let stream_id = s
+        .client
+        .create_stream(&s.donor, &s.ngo, &s.token.address, &deposit, &rate);
+
+    // 999 seconds -> nearly full balance accrued
+    s.env.ledger().with_mut(|l| l.timestamp += 999);
+    let withdrawn = s.client.withdraw(&stream_id);
+
+    let accrued = 999_000_000_000_000_000i128;
+    let expected_fee = 99_900_000_000_000_000i128; // 10% of accrued
+    let expected_net = accrued - expected_fee;
+
+    assert_eq!(withdrawn, expected_net);
+    assert_eq!(s.token.balance(&s.ngo), expected_net);
+    assert_eq!(s.token.balance(&treasury), expected_fee);
+
+    // Verify fee is exactly 10% and doesn't exceed amount
+    assert!(expected_fee <= accrued);
+    assert_eq!(expected_fee, accrued / 10);
+}
+
+#[test]
+fn mixed_decimal_scales_multiple_streams() {
+    // Verify multiple streams with different "decimal scales" work independently
+    let s = setup();
+    let treasury = Address::generate(&s.env);
+    s.client.set_treasury(&treasury);
+    s.client.set_fee_bps(&500); // 5% fee
+
+    // Stream 1: "0-decimal" - 1000 units
+    let deposit1 = 1_000i128;
+    let rate1 = 10i128;
+    s.token_admin.mint(&s.donor, &deposit1);
+
+    // Create second token for second stream with different scale
+    let token2_admin_addr = Address::generate(&s.env);
+    let (token2, token2_admin) = create_token(&s.env, &token2_admin_addr);
+
+    // Stream 2: "18-decimal" - large units
+    let deposit2 = 1_000_000_000_000_000i128;
+    let rate2 = 10_000_000_000_000i128;
+    token2_admin.mint(&s.donor, &deposit2);
+
+    let stream1 = s
+        .client
+        .create_stream(&s.donor, &s.ngo, &s.token.address, &deposit1, &rate1);
+    let stream2 = s
+        .client
+        .create_stream(&s.donor, &s.ngo, &token2.address, &deposit2, &rate2);
+
+    s.env.ledger().with_mut(|l| l.timestamp += 50);
+
+    // Withdraw both streams
+    let withdrawn1 = s.client.withdraw(&stream1);
+    let withdrawn2 = s.client.withdraw(&stream2);
+
+    // Stream 1: 500 * 5% = 25 fee, 475 net
+    assert_eq!(withdrawn1, 475);
+    assert_eq!(s.token.balance(&s.ngo), 475);
+
+    // Stream 2: 500_000_000_000_000 * 5% = 25_000_000_000_000 fee
+    let expected_net2 = 475_000_000_000_000i128;
+    assert_eq!(withdrawn2, expected_net2);
+    assert_eq!(token2.balance(&s.ngo), expected_net2);
+}
+
+#[test]
 fn admin_can_set_the_per_donor_cap() {
     let s = setup();
     s.client.set_max_streams_per_donor(&5);

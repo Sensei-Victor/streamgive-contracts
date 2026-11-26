@@ -22,10 +22,14 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@7b1c307e0dcbda6122208f10795a713336a9b35a # @stable
+        uses: dtolnay/rust-toolchain@3cfd829add0beb9cf7406e52147d74ad3db19d01 # 1.96.0
+        with:
+          toolchain: 1.96.0
+          targets: wasm32v1-none
+          components: rustfmt, clippy
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@82a92a6e8fbeee089604da2575dc567ae9ddeaff # v2.7.5
+        uses: Swatinem/rust-cache@82a92a6e8fbeee089604da2575dc567ae9ddeaab # v2.7.5
 
       - name: Install cargo-deny
         uses: taiki-e/install-action@v2
@@ -36,7 +40,7 @@ jobs:
         run: cargo deny check
 
       - name: ShellCheck
-        uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca # 2.0.0
+        uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # 2.0.0
         with:
           scandir: "./scripts"
 
@@ -87,7 +91,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Check links
-        uses: lycheeverse/lychee-action@7cd0af4c74a61395d455af97419279d86aafaede # v1.10.0
+        uses: lycheeverse/lychee-action@2b973e86fc7b1f6b36a93795fe2c9c6ae1118621 # v1.10.0
         with:
           args: --no-progress "**/*.md"
 

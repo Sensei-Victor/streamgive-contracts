@@ -2,7 +2,7 @@
 # Pin the Rust toolchain version to ensure consistent builds across environments
 # and prevent breaking changes from new Rust releases.
 # Update this periodically by checking: https://github.com/rust-lang/rust/releases
-channel = "1.83.0"
+channel = "1.96.0"
 
 # Target for Soroban smart contracts
 targets = ["wasm32v1-none"]

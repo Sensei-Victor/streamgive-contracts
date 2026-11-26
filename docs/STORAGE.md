@@ -32,7 +32,17 @@ counts below assume a 5-second average ledger close time
 | `Paused` | Instance | 30d / 29d | Emergency-brake flag checked by `require_not_paused`. |
 | `Treasury` | Instance | 30d / 29d | Address that receives the protocol fee cut on withdrawal. |
 | `FeeBps` | Instance | 30d / 29d | Protocol fee, in basis points, capped at `MAX_FEE_BPS` (1,000 / 10%). |
+| `TokenFeeBps(Address)` | Persistent | 30d / 29d | Optional per-token fee override; absent means use `FeeBps`. |
+| `TotalDonated` | Instance | 30d / 29d | Lifetime sum of successful deposits and top-ups. |
+| `TotalWithdrawn` | Instance | 30d / 29d | Lifetime gross amount settled to NGOs. |
+| `TotalFeesCollected` | Instance | 30d / 29d | Lifetime protocol fees sent to the treasury. |
+| `AllowedTokens` | Instance | 30d / 29d | Token addresses exposed to clients as the configured allowlist. |
+| `MaxStreamsPerDonor` | Instance | 30d / 29d | Lifetime stream-creation cap per donor; default is 100. |
+| `DonorStreamCount(Address)` | Persistent | 90d / 89d | Number of streams created by a donor, used by the cap. |
+| `MinDeposit` | Instance | 30d / 29d | Minimum deposit accepted by stream creation. |
 | `CancelGraceLedgers` | Instance | 30d / 29d | Additional ledgers to retain cancelled stream records for indexing. |
+| `Registry` | Instance | 30d / 29d | Optional NGO registry consulted during stream creation and transfer. |
+| `AdminRenounced` | Instance | 30d / 29d | Permanent marker that disables all admin-gated calls after renunciation. |
 | `Stream(u64)` | Persistent | 90d / 89d | One donor→NGO stream record, keyed by stream id. Extended on every `create_stream`, `withdraw`, `top_up`, `cancel_stream`, or rate change touching that stream. |
 
 All instance keys share one TTL (bumped to 30 days, refreshed once it
@@ -52,7 +62,16 @@ eligible for archival.
 | Key | Storage | Bump / threshold | Purpose |
 | --- | --- | --- | --- |
 | `Admin` | Instance | 30d / 29d | The address that can `approve_ngo` / `revoke_ngo`. |
+| `PendingAdmin` | Instance | 30d / 29d | Proposed replacement admin awaiting acceptance. |
+| `NgoCount` | Instance | 30d / 29d | Lifetime count of NGO registrations. |
+| `TotalNgos` | Instance | 30d / 29d | Reserved legacy key retained for storage-layout compatibility; callers use `NgoCount`. |
 | `Ngo(Address)` | Persistent | 90d / 89d | One NGO's registry entry (name, verified flag), keyed by its owner address. |
+| `OwnerIndexCount` | Instance | 30d / 29d | Current number of owners in the registry index. |
+| `OwnerByIndex(u32)` | Persistent | 90d / 89d | Owner address at an index in registration order. |
+| `IndexByOwner(Address)` | Persistent | 90d / 89d | Reverse index from owner address to its registration index. |
+| `Approvers` | Instance | 30d / 29d | Addresses authorized to approve, reject, and revoke NGOs. |
+| `VerifiedCount` | Instance | 30d / 29d | Stored count of entries whose verification flag is set. |
+| `VerifyPeriod` | Instance | 30d / 29d | Verification lifetime in seconds; zero means no expiry. |
 
 As with `donation-vault`, the instance TTL is refreshed on every
 state-changing call via `extend_instance_ttl`. Each `Ngo(Address)` entry
@@ -146,10 +165,13 @@ The following table summarizes all entry points that automatically bump storage 
 | --- | --- | --- | --- |
 | `donation-vault` | `create_stream` | Instance (30d), `Stream(id)` (90d) | Donor |
 | `donation-vault` | `withdraw` | Instance (30d), `Stream(id)` (90d) | NGO |
+| `donation-vault` | `withdraw_batch` | Instance (30d), every `Stream(id)` (90d) | NGO |
 | `donation-vault` | `withdraw_all` | Instance (30d), `Stream(id)` (90d) — one page of the NGO's streams | NGO |
+| `donation-vault` | `rescue_stream` | Instance (30d), `Stream(id)` (90d + cancellation grace) | Admin (paused vault) |
 | `donation-vault` | `top_up` | Instance (30d), `Stream(id)` (90d) | Donor |
 | `donation-vault` | `modify_rate` | Instance (30d), `Stream(id)` (90d) | Donor |
 | `donation-vault` | `cancel_stream` | Instance (30d), `Stream(id)` (90d + `cancel_grace_ledgers`) | Donor |
+| `donation-vault` | `transfer_stream` | Instance (30d), `Stream(id)` (90d), old/new NGO indexes (90d) | Donor |
 | `donation-vault` | `extend_stream` | `Stream(id)` (90d) | **None (Permissionless)** |
 | `ngo-registry` | `register` | Instance (30d), `Ngo(owner)` (90d) | Owner |
 | `ngo-registry` | `approve_ngo` | Instance (30d), `Ngo(owner)` (90d) | Admin or approver |
@@ -158,4 +180,26 @@ The following table summarizes all entry points that automatically bump storage 
 | `ngo-registry` | `remove_approver` | Instance (30d) | Admin |
 | `ngo-registry` | `update_name` | Instance (30d), `Ngo(owner)` (90d) | Owner |
 | `ngo-registry` | `touch_ngo` | Instance (30d), `Ngo(owner)` (90d) | **None (Permissionless)** |
+
+The complete state-changing entry-point matrix is below; entries not listed in
+the earlier lifecycle rows touch only instance storage. This includes admin
+handshake and upgrade operations, which are often missed when estimating TTL
+refreshes.
+
+| Contract entry point(s) | TTL refreshed | Authorization |
+|---|---|---|
+| vault: `__constructor`, `init`, `renounce_admin`, `propose_admin`, `accept_admin`, `cancel_admin_proposal` | Instance (30d) | deployment/admin/pending admin as applicable |
+| vault: `pause`, `unpause`, `set_treasury`, `clear_treasury`, `set_fee_bps`, `set_token_fee_bps`, `clear_token_fee_bps`, `set_min_deposit`, `set_cancel_grace_ledgers`, `set_max_streams_per_donor`, `set_max_rate`, `clear_max_rate`, `set_min_duration`, `set_registry`, `clear_registry`, `set_payout_address` | Instance (30d); `TokenFeeBps(token)` and payout keys persistent (90d) | admin, or NGO owner for payout |
+| vault: `pause_stream`, `resume_stream`, `top_up`, `modify_rate` | Instance (30d), `Stream(id)` (90d), relevant donor/NGO index (90d) | donor |
+| vault: `set_upgrade_delay`, `propose_upgrade`, `execute_upgrade`, `cancel_upgrade`, `upgrade`, `sweep_surplus` | Instance (30d); committed-balance key for `sweep_surplus` (30d) | admin |
+| registry: `__constructor`, `init`, `propose_admin`, `accept_admin`, `cancel_admin_proposal`, `add_approver`, `remove_approver`, `set_verify_period`, `upgrade` | Instance (30d) | deployment/admin/pending admin as applicable |
+| registry: `register`, `unregister`, `remove_ngo`, `reject_ngo`, `update_name`, `set_metadata_uri`, `approve_ngo`, `batch_approve`, `revoke_ngo`, `renew_ngo` | Instance (30d), affected `Ngo(owner)` and owner-index entries (90d) | owner, admin, or approver as applicable |
+
+Constructor and initialization calls bump instance storage. Admin/configuration
+calls (`renounce_admin`, the admin handshake, pause controls, fee/limit/
+registry/payout configuration, and upgrade configuration) bump the instance
+TTL. Read-only views do not bump TTL. `cancel_stream`, `rescue_stream`, and
+`transfer_stream` are listed explicitly above because they also refresh the
+affected persistent stream and index entries. `withdraw_batch` refreshes every
+stream it inspects successfully; `withdraw_all` refreshes the page's streams.
 

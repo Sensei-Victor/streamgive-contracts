@@ -6,6 +6,10 @@ how the StreamGive repos relate to each other, and so on — lives in
 first; this file only covers what's specific to working in
 `streamgive-contracts`.
 
+Please note that this project is released with a
+[Contributor Code of Conduct](./CODE_OF_CONDUCT.md). By participating you
+agree to abide by its terms.
+
 ## Local checks
 
 Before opening a PR, run what CI runs (see

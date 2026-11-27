@@ -2,7 +2,7 @@
 
 Every event published by the contracts in this repo, with its topics and
 data shape, so an indexer can be written directly against this repo without
-going to `streamgisve-docs` first.
+going to the external documentation site first.
 
 Soroban events have two parts:
 
@@ -17,22 +17,72 @@ The contracts define migrated event declarations with Soroban SDK's
 layout stable. Event type names include `RegisterEvent`, `RenamedEvent`,
 `ApprovedEvent`, `RevokedEvent`, `UnregisteredEvent`, `RemovedEvent`,
 `ProposedAdminEvent`, `AcceptedAdminEvent`, `CancelledAdminEvent`,
-`PausedEvent`, `UnpausedEvent`, `TreasurySetEvent`, `TreasuryClearedEvent`,
+`PausedEvent`, `UnpausedEvent`, `RenouncedAdminEvent`, `TreasurySetEvent`, `TreasuryClearedEvent`,
 `FeeBpsSetEvent`, `TokenFeeBpsSetEvent`, `TokenFeeBpsClearedEvent`,
 `MinDepositSetEvent`, `CancelGraceLedgersSetEvent`, `RegistrySetEvent`,
 `PayoutAddressSetEvent`, `MaxStreamsPerDonorSetEvent`, `MaxRateSetEvent`,
 `MaxRateClearedEvent`, `InitializedEvent`,
-`UpgradedEvent`, `UpgradeProposedEvent`, `UpgradeCancelledEvent`,
-`UpgradeDelaySetEvent`, `ApproverAddedEvent`, `ApproverRemovedEvent`,
-`MetadataUriSetEvent`, `RenewedEvent`, `VerifyPeriodSetEvent`, `CreatedEvent`,
+`UpgradedEvent`, `ConfigSnapshotEvent`, `UpgradeProposedEvent`,
+`UpgradeCancelledEvent`, `UpgradeDelaySetEvent`, `ApproverAddedEvent`,
+`ApproverRemovedEvent`,
+`MetadataUriSetEvent`, `RenewedEvent`, `VerifyPeriodSetEvent`, `RegistrationsPausedEvent`,
+`RegistrationsResumedEvent`, `CreatedEvent`,
 `WithdrawnEvent`, `DrainedEvent`, `CancelledStreamEvent`, `RescuedStreamEvent`,
-`ToppedUpEvent`, `RateModifiedEvent`, and `SurplusSweptEvent`.
+`ToppedUpEvent`, `RateModifiedEvent`, `TransferStreamEvent`,
+`PausedStreamEvent`, `ResumedStreamEvent`, and `SurplusSweptEvent`.
 
 `Address`, `i128`, `u64`, `u32`, `bool`, and `String` are the standard
 Soroban SDK/XDR types (`Address` is the SDK's account/contract address
 type, `String` is `soroban_sdk::String`).
 
 ## `ngo-registry`
+
+### `propadmin`
+
+Emitted by `propose_admin` when the registry admin nominates a replacement.
+
+| | |
+|---|---|
+| Topics | `("propadmin",)` |
+| Data | `new_admin: Address` |
+
+### `acptadmin`
+
+Emitted by `accept_admin` when the pending registry admin takes control.
+
+| | |
+|---|---|
+| Topics | `("acptadmin",)` |
+| Data | `new_admin: Address` |
+
+### `canceladm`
+
+Emitted by `cancel_admin_proposal` when the registry admin cancels the pending
+transfer.
+
+| | |
+|---|---|
+| Topics | `("canceladm",)` |
+| Data | `()` (no payload) |
+
+### `regrpause`
+
+Emitted by `pause_registrations` when the admin closes the registry to new
+applications.
+
+| | |
+|---|---|
+| Topics | `("regrpause",)` |
+| Data | `()` (no payload) |
+
+### `regresume`
+
+Emitted by `resume_registrations` when the admin re-opens the registry.
+
+| | |
+|---|---|
+| Topics | `("regresume",)` |
+| Data | `()` (no payload) |
 
 ### `register`
 
@@ -45,6 +95,15 @@ Emitted by `register` when an NGO submits an application.
 
 The entry starts unverified (`verified: false`); look for a matching
 `approved` event for the same `owner` to know when it's live.
+
+### `unregist`
+
+Emitted by `unregister` when an unverified NGO removes its own application.
+
+| | |
+|---|---|
+| Topics | `("unregist", owner: Address)` |
+| Data | `()` (no payload) |
 
 ### `renamed`
 
@@ -243,6 +302,25 @@ admin has no further authority.
 | Topics | `("acptadmin",)` |
 | Data | `new_admin: Address` |
 
+### `canceladm`
+
+Emitted by `cancel_admin_proposal` when the current admin clears a pending
+admin transfer.
+
+| | |
+|---|---|
+| Topics | `("canceladm",)` |
+| Data | `()` (no payload) |
+
+### `renounce`
+
+Emitted by `renounce_admin` when admin control is permanently disabled.
+
+| | |
+|---|---|
+| Topics | `("renounce",)` |
+| Data | `()` (no payload) |
+
 ### `pause`
 
 Emitted by `pause` when an admin halts stream creation, withdrawal, top-up,
@@ -343,6 +421,19 @@ The event carries the full new value so an indexer can track the minimum
 without polling `min_deposit()`. A negative value fails with `InvalidAmount`
 and emits nothing.
 
+### `maxstrm`
+
+Emitted by `set_max_streams_per_donor` when the lifetime per-donor creation
+cap changes.
+
+| | |
+|---|---|
+| Topics | `("maxstrm",)` |
+| Data | `limit: u64` |
+
+The cap is checked before the donor's token transfer. Existing streams are not
+deleted when the cap changes; the stored counter is a lifetime creation count.
+
 ### `grceset`
 
 Emitted by `set_cancel_grace_ledgers` when an admin changes the extra ledger
@@ -403,7 +494,11 @@ contract.
 | | |
 |---|---|
 | Topics | `("regset",)` |
-| Data | `registry: Address` (the new registry address) |
+| Data | `(registry: Address, previous_registry: Option<Address>)` |
+
+The previous registry is `None` (XDR void) when no registry was configured,
+including after a clear. Historical `regset` events contain a single address.
+Indexers reading both versions can distinguish them by the payload shape.
 
 Once set, `create_stream` verifies the NGO against this registry. To clear the
 registry pointer back to `None`, the admin calls `clear_registry` (emitting `regclr`).
@@ -453,6 +548,25 @@ configured `upgrade_delay` of zero). With a non-zero delay it returns
 `Error::UpgradeTimelockEnabled`, and the code change happens through
 `execute_upgrade` instead (#343).
 
+### `config_snapshot`
+
+Emitted by `execute_upgrade` just before its `upgrade` event, carrying the
+full configuration in force as the upgraded code takes over. Settings newly
+introduced by an upgrade take their defaults silently; this event gives an
+indexer a known starting point for the new contract version instead of
+leaving it to infer when a value changed (#443).
+
+| | |
+|---|---|
+| Topics | `("config_snapshot",)` |
+| Data | `config: Config` (the same struct returned by `get_config`) |
+
+The payload includes `paused`, `treasury`, `fee_bps`, `min_deposit`,
+`max_streams_per_donor`, `max_rate`, `min_duration`, `registry`,
+`cancel_grace_ledgers`, `total_donated`, `total_withdrawn`,
+`total_fees_collected`, `pending_admin`, and `renounced`. It is published only
+by `execute_upgrade`; the immediate `upgrade` entry point does not emit one.
+
 ### `uppropose`
 
 Emitted by `propose_upgrade` when an admin records the Wasm hash to upgrade to
@@ -492,19 +606,33 @@ timelock lasts.
 
 ### `sweep`
 
-Emitted by `sweep_surplus` when an admin moves tokens that were sent to the
-vault by mistake to the treasury.
+Emitted by `sweep_surplus` and `sweep_surplus_to` when an admin moves tokens
+that were sent to the vault by mistake to an explicit destination.
 
 | | |
 |---|---|
 | Topics | `("sweep", token: Address)` |
-| Data | `(amount: i128, treasury: Address)` |
+| Data | `(amount: i128, destination: Address)` |
 
 `amount` never exceeds the surplus above the token's committed balance (the sum
 of stream balances the vault holds), so a sweep can never touch funds belonging
-to streams. `treasury` is the payout address the surplus went to. An indexer can
-reconstruct the recoverable surplus at any time as the vault's token balance
-minus `committed_balance(token)` (#346).
+to streams. `destination` is the address the surplus went to: the configured
+treasury for `sweep_surplus`, or the caller-supplied address for
+`sweep_surplus_to` (#439). An indexer can reconstruct the recoverable surplus
+at any time as the vault's token balance minus `committed_balance(token)`
+(#346).
+
+### `rescue`
+
+Emitted by `rescue_stream` when the paused-vault emergency path refunds a
+stream's remaining balance to its donor and permanently cancels it.
+
+| | |
+|---|---|
+| Topics | `("rescue", stream_id: u64)` |
+| Data | `refund: i128` |
+
+The call is admin-only and fails with `NotPaused` unless the vault is paused.
 
 ### `created`
 
@@ -520,6 +648,20 @@ much of it accrues to the NGO per second (see [`math::accrued`](../contracts/don
 `memo` is the donor's optional free-form tag, e.g. a campaign id, capped at
 `MAX_MEMO_BYTES` (32) bytes and empty when none was supplied (#341). It is a
 short label only — never truncate or reinterpret it.
+
+### `memoset`
+
+Emitted by `set_memo` when a donor replaces a stream's memo (#441).
+
+| | |
+|---|---|
+| Topics | `("memoset", stream_id: u64)` |
+| Data | `(old_memo: Bytes, new_memo: Bytes)` |
+
+Both values are carried so an indexer can update its copy without having
+retained the previous memo. `new_memo` is empty when the donor cleared the
+tag, and never exceeds `MAX_MEMO_BYTES` (32) bytes; a longer one is rejected
+with `MemoTooLong` and nothing is written.
 
 ### `withdraw`
 
@@ -568,6 +710,9 @@ a drain.
 ### `cancel`
 
 Emitted by `cancel_stream` when a donor stops a stream for good.
+`cancel_streams` emits one of these per stream it cancels, with the same
+topics and data, so an indexer handles single and batch cancellations
+identically.
 
 | | |
 |---|---|
@@ -608,7 +753,7 @@ the NGO first, so the new rate only ever applies going forward. `settled` report
 the gross amount settled to the NGO at the old rate. The event records both rates
 so an indexer can calculate the change without another state query.
 
-### `transfer`
+### `transfer_stream`
 
 Emitted by `transfer_stream` when a donor reassigns an ongoing stream to a
 different NGO.
@@ -624,11 +769,26 @@ without emitting a separate `withdraw` event; `settled` reports that gross
 amount settled to `old_ngo`. After this event, future accrual goes to the
 `new_ngo` in `data`. The donor and the stream's balance and rate are unchanged.
 
-### `unregist`
+### `strmpause`
 
-Emitted by `ngo-registry` when an unverified NGO removes its own application.
+Emitted by `pause_stream` when a donor pauses a stream. Any accrued amount is
+settled first; the event reports that gross amount without emitting a separate
+`withdraw` event.
 
 | | |
 |---|---|
-| Topics | `("unregist", owner: Address)` |
+| Topics | `("strmpause", stream_id: u64)` |
+| Data | `settled: i128` |
+
+If settling empties the stream, a `drained` event is emitted before
+`strmpause`, and the stream remains `Drained` rather than becoming `Paused`.
+
+### `strmresume`
+
+Emitted by `resume_stream` when a donor resumes a paused stream. Accrual starts
+again from the resume time; time spent paused does not accrue.
+
+| | |
+|---|---|
+| Topics | `("strmresume", stream_id: u64)` |
 | Data | `()` (no payload) |

@@ -1,0 +1,114 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: Draft release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build (wasm32 target)
+        run: cargo build --workspace --target wasm32v1-none --release
+
+      - name: Compute wasm hashes
+        run: |
+          cd target/wasm32v1-none/release
+          sha256sum *.wasm > wasm.sha256
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat wasm.sha256 >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Extract changelog notes
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          python3 - << 'EOF'
+          import os
+          import re
+
+          tag = os.environ.get("TAG_NAME", "")
+          version = tag.lstrip("v")
+
+          with open("CHANGELOG.md", "r", encoding="utf-8") as f:
+              lines = f.read().splitlines()
+
+          version_pattern = re.compile(
+              rf"^##\s+\[?(?:v)?{re.escape(version)}\]?(?:\s+-\s+.*)?$",
+              re.IGNORECASE
+          )
+
+          start_idx = None
+          for i, line in enumerate(lines):
+              if version_pattern.match(line):
+                  start_idx = i
+                  break
+
+          # Fallback to [Unreleased] if the tagged version heading does not exist
+          if start_idx is None:
+              for i, line in enumerate(lines):
+                  if re.match(r"^##\s+\[Unreleased\]", line, re.IGNORECASE):
+                      start_idx = i
+                      break
+
+          notes = []
+          if start_idx is not None:
+              for line in lines[start_idx + 1:]:
+                  if re.match(r"^##?\s+", line):
+                      break
+                  if re.match(r"^\[.*?\]:\s+https?://", line):
+                      break
+                  notes.append(line)
+
+          notes_content = "\n".join(notes).strip()
+
+          with open("release_notes.md", "w", encoding="utf-8") as f:
+              if notes_content:
+                  f.write(notes_content + "\n\n")
+              else:
+                  f.write(f"Release {tag}\n\n")
+
+              sha256_path = "target/wasm32v1-none/release/wasm.sha256"
+              if os.path.exists(sha256_path):
+                  f.write("### Wasm Hashes\n\n```\n")
+                  with open(sha256_path, "r", encoding="utf-8") as hf:
+                      f.write(hf.read().strip() + "\n")
+                  f.write("```\n")
+          EOF
+
+      - name: Draft GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release edit "$TAG_NAME" --title "$TAG_NAME" --notes-file release_notes.md --draft
+            gh release upload "$TAG_NAME" target/wasm32v1-none/release/*.wasm target/wasm32v1-none/release/wasm.sha256 --clobber
+          else
+            gh release create "$TAG_NAME" \
+              target/wasm32v1-none/release/*.wasm \
+              target/wasm32v1-none/release/wasm.sha256 \
+              --title "$TAG_NAME" \
+              --notes-file release_notes.md \
+              --draft
+          fi

@@ -6,6 +6,10 @@ how the StreamGive repos relate to each other, and so on — lives in
 first; this file only covers what's specific to working in
 `streamgive-contracts`.
 
+Please note that this project is released with a
+[Contributor Code of Conduct](./CODE_OF_CONDUCT.md). By participating you
+agree to abide by its terms.
+
 ## Local checks
 
 Before opening a PR, run what CI runs (see
@@ -17,6 +21,17 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace --target wasm32v1-none --release
 cargo test --workspace
 ```
+
+### Pre-commit hook
+
+To catch formatting and lint failures before committing, install the repository's git hook (see [`scripts/hooks/README.md`](./scripts/hooks/README.md)):
+
+```sh
+git config core.hooksPath scripts/hooks
+chmod +x scripts/hooks/pre-commit
+```
+
+The hook automatically checks `cargo fmt --check` and runs `cargo clippy` on any changed crates whenever you commit.
 
 See the [README](./README.md#testing) for more on the test suite, and
 [docs/EVENTS.md](./docs/EVENTS.md) if your change adds or changes a

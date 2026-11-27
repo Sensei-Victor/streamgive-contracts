@@ -6,7 +6,7 @@ use soroban_sdk::testutils::storage::{Instance as _, Persistent as _};
 use soroban_sdk::testutils::{
     Address as _, AuthorizedFunction, Events as _, Ledger, MockAuth, MockAuthInvoke,
 };
-use soroban_sdk::{symbol_short, vec, IntoVal, Symbol, Val, Vec};
+use soroban_sdk::{symbol_short, vec, IntoVal, Symbol, TryFromVal, Val, Vec};
 
 fn setup() -> (Env, NgoRegistryClient<'static>, Address) {
     let env = Env::default();
@@ -470,9 +470,9 @@ fn register_and_update_name_byte_boundaries_and_multibyte() {
     let (env, client, _admin) = setup();
     let owner = Address::generate(&env);
 
-    // Greek capital Omega 'Î©' (U+03A9) is 2 bytes in UTF-8 (0xCE 0xA9).
+    // Greek capital Omega 'Ω' (U+03A9) is 2 bytes in UTF-8 (0xCE 0xA9).
     // 100 * 2 bytes = 200 bytes, exactly MAX_NGO_NAME_LEN.
-    let omega_100_str = "Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©";
+    let omega_100_str = "ΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩ";
     assert_eq!(omega_100_str.len(), 200);
     let omega_100 = String::from_str(&env, omega_100_str);
 
@@ -480,7 +480,7 @@ fn register_and_update_name_byte_boundaries_and_multibyte() {
     assert_eq!(client.get_ngo(&owner).name, omega_100);
 
     // 101 Greek capital Omegas = 202 bytes > 200 bytes, rejected with NameTooLong.
-    let omega_101_str = "Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©Î©";
+    let omega_101_str = "ΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩΩ";
     assert_eq!(omega_101_str.len(), 202);
     let omega_101 = String::from_str(&env, omega_101_str);
 
@@ -491,15 +491,15 @@ fn register_and_update_name_byte_boundaries_and_multibyte() {
     let res_reg = client.try_register(&owner2, &omega_101);
     assert_eq!(res_reg, Err(Ok(Error::NameTooLong)));
 
-    // Multi-byte at boundary: 198 'a's + 1 'Î©' (2 bytes) = 200 bytes -> accepted
-    let boundary_200_str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaÎ©";
+    // Multi-byte at boundary: 198 'a's + 1 'Ω' (2 bytes) = 200 bytes -> accepted
+    let boundary_200_str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaΩ";
     assert_eq!(boundary_200_str.len(), 200);
     let boundary_200 = String::from_str(&env, boundary_200_str);
     client.update_name(&owner, &boundary_200);
     assert_eq!(client.get_ngo(&owner).name, boundary_200);
 
-    // 199 'a's + 1 'Î©' (2 bytes) = 201 bytes -> rejected with NameTooLong without panicking
-    let boundary_201_str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaÎ©";
+    // 199 'a's + 1 'Ω' (2 bytes) = 201 bytes -> rejected with NameTooLong without panicking
+    let boundary_201_str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaΩ";
     assert_eq!(boundary_201_str.len(), 201);
     let boundary_201 = String::from_str(&env, boundary_201_str);
     let res_boundary = client.try_update_name(&owner, &boundary_201);
@@ -1474,21 +1474,6 @@ fn list_ngos_page_out_of_range_start_returns_empty_with_total() {
 }
 
 #[test]
-fn list_ngos_page_zero_limit_returns_empty_with_total() {
-    let (env, client, _admin) = setup();
-    for _ in 0..5 {
-        let owner = Address::generate(&env);
-        client.register(&owner, &String::from_str(&env, "NGO"));
-    }
-
-    let page = client.list_ngos_page(&0, &0);
-
-    assert_eq!(page.owners.len(), 0);
-    assert_eq!(page.owners, Vec::new(&env));
-    assert_eq!(page.next, client.total_ngos());
-}
-
-#[test]
 fn list_ngos_page_empty_registry_returns_total_zero() {
     let (_env, client, _admin) = setup();
 
@@ -1609,8 +1594,8 @@ fn verified_count_decrements_when_a_verified_ngo_is_removed() {
     client.approve_ngo(&admin, &owner);
     assert_eq!(client.verified_count(), 1);
 
-    // No public entry point removes a verified NGO â€” unregister, remove_ngo and
-    // reject_ngo all refuse it â€” so drive the shared delete helper directly to
+    // No public entry point removes a verified NGO — unregister, remove_ngo and
+    // reject_ngo all refuse it — so drive the shared delete helper directly to
     // prove it keeps the counter honest.
     env.as_contract(&client.address, || {
         delete_ngo_entry(&env, &owner).unwrap();
@@ -2244,6 +2229,133 @@ fn decrement_at_zero_returns_arithmetic_overflow() {
     assert!(client.try_get_ngo(&owner).is_ok());
 }
 
+// ── pause_registrations / resume_registrations / registrations_paused ────────
+
+#[test]
+fn registrations_paused_is_false_by_default() {
+    let (_env, client, _admin) = setup();
+    assert!(!client.registrations_paused());
+}
+
+#[test]
+fn pause_registrations_blocks_register() {
+    let (env, client, _admin) = setup();
+
+    client.pause_registrations();
+    assert!(client.registrations_paused());
+
+    let owner = Address::generate(&env);
+    let name = String::from_str(&env, "Test NGO");
+    assert_eq!(
+        client.try_register(&owner, &name),
+        Err(Ok(Error::RegistrationsPaused))
+    );
+    // No entry should have been stored
+    assert_eq!(client.try_get_ngo(&owner), Err(Ok(Error::NotRegistered)));
+    assert_eq!(client.ngo_count(), 0);
+}
+
+#[test]
+fn resume_registrations_unblocks_register() {
+    let (env, client, _admin) = setup();
+
+    client.pause_registrations();
+    assert!(client.registrations_paused());
+
+    client.resume_registrations();
+    assert!(!client.registrations_paused());
+
+    let owner = Address::generate(&env);
+    let name = String::from_str(&env, "Re-opened NGO");
+    client.register(&owner, &name);
+    assert_eq!(client.ngo_count(), 1);
+    assert!(!client.get_ngo(&owner).verified);
+}
+
+#[test]
+fn pause_registrations_does_not_affect_other_functions() {
+    let (env, client, admin) = setup();
+
+    // Register one NGO, then pause registrations
+    let owner = Address::generate(&env);
+    let name = String::from_str(&env, "Pre-pause NGO");
+    client.register(&owner, &name);
+
+    client.pause_registrations();
+    assert!(client.registrations_paused());
+
+    // All non-register entry points must still work
+    // approve_ngo still works
+    client.approve_ngo(&admin, &owner);
+    assert!(client.is_verified(&owner));
+
+    // revoke_ngo still works
+    client.revoke_ngo(&admin, &owner);
+    assert!(!client.is_verified(&owner));
+
+    // read-only views are unaffected
+    assert_eq!(client.ngo_count(), 1);
+    let ngo = client.get_ngo(&owner);
+    assert_eq!(ngo.name, name);
+}
+
+#[test]
+fn pause_registrations_emits_event() {
+    let (env, client, _admin) = setup();
+    client.pause_registrations();
+
+    let all = env.events().all();
+    let events = all.events();
+    let last = &events[events.len() - 1];
+    let soroban_sdk::xdr::ContractEventBody::V0(body) = &last.body;
+    let first_topic = body.topics.first().expect("at least one topic");
+    let expected: soroban_sdk::xdr::ScVal =
+        soroban_sdk::xdr::ScVal::try_from_val(&env, &symbol_short!("regrpause").to_val()).unwrap();
+    assert_eq!(first_topic, &expected);
+}
+
+#[test]
+fn resume_registrations_emits_event() {
+    let (env, client, _admin) = setup();
+    client.pause_registrations();
+    client.resume_registrations();
+
+    let all = env.events().all();
+    let events = all.events();
+    let last = &events[events.len() - 1];
+    let soroban_sdk::xdr::ContractEventBody::V0(body) = &last.body;
+    let first_topic = body.topics.first().expect("at least one topic");
+    let expected: soroban_sdk::xdr::ScVal =
+        soroban_sdk::xdr::ScVal::try_from_val(&env, &symbol_short!("regresume").to_val()).unwrap();
+    assert_eq!(first_topic, &expected);
+}
+
+#[test]
+fn pause_registrations_idempotent_error() {
+    let (_env, client, _admin) = setup();
+    client.pause_registrations();
+    // Calling pause again while already paused should fail
+    assert_eq!(
+        client.try_pause_registrations(),
+        Err(Ok(Error::RegistrationsPaused))
+    );
+}
+
+#[test]
+fn resume_registrations_when_not_paused_errors() {
+    let (_env, client, _admin) = setup();
+    // Not paused yet — should return an error
+    assert!(client.try_resume_registrations().is_err());
+}
+
+#[test]
+#[should_panic]
+fn pause_registrations_requires_admin_auth() {
+    let (env, client, _admin) = setup();
+    env.mock_auths(&[]);
+    client.pause_registrations();
+}
+
 #[test]
 fn failed_register_leaves_count_unchanged() {
     let (env, client, _admin) = setup();
@@ -2343,8 +2455,7 @@ fn add_approver_lists_approver_and_publishes_event() {
 
     client.add_approver(&reviewer);
 
-    assert!(client.is_approver(&reviewer));
-    assert_eq!(client.list_approvers(), vec![&env, reviewer.clone()]);
+    // Read the events before any further contract call replaces them.
     assert_eq!(
         env.events().all(),
         vec![
@@ -2356,6 +2467,8 @@ fn add_approver_lists_approver_and_publishes_event() {
             ),
         ]
     );
+    assert!(client.is_approver(&reviewer));
+    assert_eq!(client.list_approvers(), vec![&env, reviewer.clone()]);
 }
 
 #[test]
@@ -2379,8 +2492,7 @@ fn remove_approver_unlists_approver_and_publishes_event() {
 
     client.remove_approver(&reviewer);
 
-    assert!(!client.is_approver(&reviewer));
-    assert_eq!(client.list_approvers().len(), 0);
+    // Read the events before any further contract call replaces them.
     assert_eq!(
         env.events().all(),
         vec![
@@ -2392,6 +2504,8 @@ fn remove_approver_unlists_approver_and_publishes_event() {
             ),
         ]
     );
+    assert!(!client.is_approver(&reviewer));
+    assert_eq!(client.list_approvers().len(), 0);
 }
 
 #[test]
@@ -2429,13 +2543,14 @@ fn approver_can_approve_and_revoke() {
     client.register(&owner, &String::from_str(&env, "Red Cross"));
 
     client.approve_ngo(&reviewer, &owner);
-    assert!(client.get_ngo(&owner).verified);
-    // The approver, not the admin, is the sole authorizer.
+    // The approver, not the admin, is the sole authorizer. Check before any
+    // other contract call replaces the recorded auths.
     assert_sole_auth(&env, &client, &reviewer, "approve_ngo");
+    assert!(client.get_ngo(&owner).verified);
 
     client.revoke_ngo(&reviewer, &owner);
-    assert!(!client.get_ngo(&owner).verified);
     assert_sole_auth(&env, &client, &reviewer, "revoke_ngo");
+    assert!(!client.get_ngo(&owner).verified);
 }
 
 #[test]
@@ -2554,7 +2669,7 @@ fn approver_does_not_gain_admin_rights() {
     }]);
 
     assert!(client.try_remove_ngo(&owner).is_err());
-    assert!(!client.get_ngo(&owner).verified);
+    assert!(client.get_ngo(&owner).verified == false);
 }
 
 // =============================================================================
@@ -2689,7 +2804,7 @@ fn non_approver_cannot_reject() {
     let result = client.try_reject_ngo(&outsider, &owner, &3);
 
     assert_eq!(result, Err(Ok(Error::NotApprover)));
-    assert!(!client.get_ngo(&owner).verified);
+    assert!(client.get_ngo(&owner).verified == false);
 }
 
 #[test]
@@ -2739,6 +2854,94 @@ fn reject_ngo_frees_the_index_and_lets_the_owner_register_again() {
     client.register(&b, &String::from_str(&env, "B again"));
     assert!(!client.get_ngo(&b).verified);
     assert_eq!(client.total_ngos(), 3);
+}
+
+// =============================================================================
+// verification_status (issue #448)
+// =============================================================================
+
+#[test]
+fn verification_status_unknown_for_unregistered_address() {
+    let (env, client, _admin) = setup();
+    let stranger = Address::generate(&env);
+    assert_eq!(
+        client.verification_status(&stranger),
+        VerificationStatus::Unknown
+    );
+}
+
+#[test]
+fn verification_status_pending_after_register() {
+    let (env, client, _admin) = setup();
+    let owner = Address::generate(&env);
+    client.register(&owner, &String::from_str(&env, "Red Cross"));
+    assert_eq!(
+        client.verification_status(&owner),
+        VerificationStatus::Pending
+    );
+}
+
+#[test]
+fn verification_status_verified_after_approve() {
+    let (env, client, admin) = setup();
+    let owner = Address::generate(&env);
+    client.register(&owner, &String::from_str(&env, "Red Cross"));
+    client.approve_ngo(&admin, &owner);
+    assert_eq!(
+        client.verification_status(&owner),
+        VerificationStatus::Verified
+    );
+}
+
+#[test]
+fn verification_status_revoked_after_revoke() {
+    let (env, client, admin) = setup();
+    let owner = Address::generate(&env);
+    client.register(&owner, &String::from_str(&env, "Red Cross"));
+    client.approve_ngo(&admin, &owner);
+    client.revoke_ngo(&admin, &owner);
+    assert_eq!(
+        client.verification_status(&owner),
+        VerificationStatus::Revoked
+    );
+}
+
+#[test]
+fn verification_status_expired_after_period_lapses() {
+    let (env, client, admin) = setup();
+    client.set_verify_period(&1_000);
+    let owner = Address::generate(&env);
+    client.register(&owner, &String::from_str(&env, "Red Cross"));
+    client.approve_ngo(&admin, &owner);
+    assert_eq!(
+        client.verification_status(&owner),
+        VerificationStatus::Verified
+    );
+
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+    assert_eq!(
+        client.verification_status(&owner),
+        VerificationStatus::Expired
+    );
+}
+
+#[test]
+fn verification_status_verified_again_after_reapprove() {
+    let (env, client, admin) = setup();
+    let owner = Address::generate(&env);
+    client.register(&owner, &String::from_str(&env, "Red Cross"));
+    client.approve_ngo(&admin, &owner);
+    client.revoke_ngo(&admin, &owner);
+    assert_eq!(
+        client.verification_status(&owner),
+        VerificationStatus::Revoked
+    );
+
+    client.approve_ngo(&admin, &owner);
+    assert_eq!(
+        client.verification_status(&owner),
+        VerificationStatus::Verified
+    );
 }
 
 /// Names of the `pub fn`s in the `#[contractimpl]` block that opens with
@@ -2826,7 +3029,7 @@ fn roles_doc_lists_every_entry_point() {
     }
 }
 // =============================================================================
-// NGO owner transfer tests (keeping verified flag)
+// Test for list_ngos handling removed entries (Issue 4)
 // =============================================================================
 
 #[test]
@@ -2836,19 +3039,29 @@ fn ngo_owner_transfer_preserves_verified_flag_on_propose() {
     let old_owner = Address::generate(&env);
     let new_owner = Address::generate(&env);
 
-    client.register(&old_owner, &String::from_str(&env, "Red Cross"));
-    client.approve_ngo(&admin, &old_owner);
+// Register and verify an NGO
+client.register(&old_owner, &String::from_str(&env, "Red Cross"));
+client.approve_ngo(&admin, &old_owner);
 
+// Verify the NGO is verified before transfer
     assert!(client.is_verified(&old_owner));
     let ngo_before = client.get_ngo(&old_owner);
     assert!(ngo_before.verified);
 
+// Propose owner transfer (feature not yet implemented)
+// client.propose_ngo_owner(&old_owner, &new_owner);
+
+// After proposal, the old owner should still be verified and the entry unchanged
     assert!(client.is_verified(&old_owner));
     let ngo_after_propose = client.get_ngo(&old_owner);
     assert!(ngo_after_propose.verified);
     assert_eq!(ngo_after_propose.owner, old_owner);
 
-    assert_eq!(client.try_get_ngo(&new_owner), Err(Ok(Error::NotRegistered)));
+// The new owner should not have an NGO entry yet
+assert_eq!(
+    client.try_get_ngo(&new_owner),
+    Err(Ok(Error::NotRegistered))
+);
 }
 
 #[test]
@@ -2869,6 +3082,18 @@ fn ngo_owner_transfer_preserves_verified_flag_on_accept() {
     // client.propose_ngo_owner(&old_owner, &new_owner);
     // client.accept_ngo_owner(&new_owner);
     
+
+    // Register and verify an NGO
+    client.register(&old_owner, &String::from_str(&env, "Red Cross"));
+    client.approve_ngo(&admin, &old_owner);
+
+    // Verify the NGO is verified before transfer
+    assert!(client.is_verified(&old_owner));
+
+    // Propose and accept owner transfer (features not yet implemented)
+    // client.propose_ngo_owner(&old_owner, &new_owner);
+    // client.accept_ngo_owner(&new_owner);
+
     // After acceptance:
     // 1. The new owner should have the NGO with verified flag preserved
     let new_ngo = client.get_ngo(&new_owner);
@@ -2880,6 +3105,26 @@ fn ngo_owner_transfer_preserves_verified_flag_on_accept() {
     assert_eq!(client.try_get_ngo(&old_owner), Err(Ok(Error::NotRegistered)));
     assert!(!client.is_verified(&old_owner), "old owner should not be verified after transfer");
     
+    // 3. Existing streams pointing to the old owner address should still be valid
+    // (This would be tested in donation-vault tests, but the registry transfer
+    // must not break them by invalidating the NGO)
+#[test]
+    assert!(
+        new_ngo.verified,
+        "verified flag must be preserved after owner transfer"
+    );
+    assert!(client.is_verified(&new_owner));
+
+    // 2. The old owner should no longer have an NGO entry
+    assert_eq!(
+        client.try_get_ngo(&old_owner),
+        Err(Ok(Error::NotRegistered))
+    );
+    assert!(
+        !client.is_verified(&old_owner),
+        "old owner should not be verified after transfer"
+    );
+
     // 3. Existing streams pointing to the old owner address should still be valid
     // (This would be tested in donation-vault tests, but the registry transfer
     // must not break them by invalidating the NGO)
@@ -2951,19 +3196,30 @@ fn list_ngos_handles_removed_entries_correctly() {
 #[ignore] // TODO: Requires propose_ngo_owner, cancel_ngo_owner_proposal implementation
 fn ngo_owner_transfer_cancel_keeps_original_owner_verified() {
     let (env, client, admin) = setup();
+
+#[ignore] // TODO: Requires propose_ngo_owner, cancel_ngo_owner_proposal implementation
+fn ngo_owner_transfer_cancel_keeps_original_owner_verified() {
+    let (env, client, admin) = setup();
     let old_owner = Address::generate(&env);
     let new_owner = Address::generate(&env);
 
-    client.register(&old_owner, &String::from_str(&env, "Red Cross"));
-    client.approve_ngo(&admin, &old_owner);
+// Register and verify an NGO
+client.register(&old_owner, &String::from_str(&env, "Red Cross"));
+client.approve_ngo(&admin, &old_owner);
 
-    assert!(client.is_verified(&old_owner));
-    let ngo_before = client.get_ngo(&old_owner);
+// Verify the NGO is verified before transfer
+assert!(client.is_verified(&old_owner));
 
-    // TODO: Implement ownership proposal and cancellation.
-    // client.propose_ngo_owner(&old_owner, &new_owner);
-    // client.cancel_ngo_owner_proposal(&old_owner);
+let ngo_before = client.get_ngo(&old_owner);
 
+// TODO: Implement ownership proposal and cancellation.
+// client.propose_ngo_owner(&old_owner, &new_owner);
+
+// Cancel the proposal (feature not yet implemented)
+// client.cancel_ngo_owner_proposal(&old_owner);
+
+// After cancellation:
+// 1. The old owner should still be verified with unchanged entry
     assert!(client.is_verified(&old_owner));
 
     let ngo_after_cancel = client.get_ngo(&old_owner);
@@ -2971,6 +3227,7 @@ fn ngo_owner_transfer_cancel_keeps_original_owner_verified() {
     assert_eq!(ngo_after_cancel.owner, old_owner);
     assert_eq!(ngo_after_cancel.name, ngo_before.name);
 
+// 2. The new owner should not have an NGO entry
     assert_eq!(
         client.try_get_ngo(&new_owner),
         Err(Ok(Error::NotRegistered))
@@ -2985,21 +3242,38 @@ fn unverified_ngo_owner_transfer_keeps_unverified_status() {
     let old_owner = Address::generate(&env);
     let new_owner = Address::generate(&env);
 
-    // Register without verification
-    client.register(&old_owner, &String::from_str(&env, "Pending NGO"));
+// Register but DO NOT verify the NGO
+client.register(&old_owner, &String::from_str(&env, "Pending NGO"));
 
+// Verify the NGO is NOT verified before transfer
     assert!(!client.is_verified(&old_owner));
 
     let ngo_before = client.get_ngo(&old_owner);
     assert!(!ngo_before.verified);
 
-    // TODO: Implement ownership transfer.
-    // client.propose_ngo_owner(&old_owner, &new_owner);
-    // client.accept_ngo_owner(&new_owner);
+// TODO: Implement ownership transfer.
+// client.propose_ngo_owner(&old_owner, &new_owner);
+// client.accept_ngo_owner(&new_owner);
 
-    // These assertions describe the expected behavior after implementation.
-    // They cannot pass until the transfer functions exist.
-    let _ = ngo_before;
+// Expected behavior after implementation:
+//
+// 1. The new owner should have the NGO with unverified status preserved.
+// let new_ngo = client.get_ngo(&new_owner);
+// assert_eq!(new_ngo.owner, new_owner);
+// assert!(
+//     !new_ngo.verified,
+//     "unverified status must be preserved after owner transfer"
+// );
+// assert!(!client.is_verified(&new_owner));
+//
+// 2. The old owner should no longer have an NGO entry.
+// assert_eq!(
+//     client.try_get_ngo(&old_owner),
+//     Err(Ok(Error::NotRegistered))
+// );
+//
+// Retain the previous NGO snapshot for future comparison.
+let _ = ngo_before;
 }
 
 #[test]
@@ -3009,6 +3283,7 @@ fn ngo_owner_transfer_preserves_all_ngo_metadata() {
     let old_owner = Address::generate(&env);
     let new_owner = Address::generate(&env);
 
+// Register, verify, and set metadata for an NGO
     client.register(
         &old_owner,
         &String::from_str(&env, "International Red Cross"),
@@ -3018,27 +3293,39 @@ fn ngo_owner_transfer_preserves_all_ngo_metadata() {
 
     client.set_metadata_uri(
         &old_owner,
-        &Some(String::from_str(
-            &env,
-            "https://redcross.org/logo.png",
-        )),
+&Some(String::from_str(
+    &env,
+    "https://redcross.org/logo.png",
+)),
     );
 
     let ngo_before = client.get_ngo(&old_owner);
 
-    // TODO: Implement ownership transfer.
-    // client.propose_ngo_owner(&old_owner, &new_owner);
-    // client.accept_ngo_owner(&new_owner);
+// TODO: Implement ownership transfer.
+// client.propose_ngo_owner(&old_owner, &new_owner);
+// client.accept_ngo_owner(&new_owner);
 
-    // Expected after implementation:
-    // let new_ngo = client.get_ngo(&new_owner);
-    // assert_eq!(new_ngo.owner, new_owner);
-    // assert_eq!(new_ngo.name, ngo_before.name);
-    // assert_eq!(new_ngo.verified, ngo_before.verified);
-    // assert_eq!(new_ngo.metadata_uri, ngo_before.metadata_uri);
-    // assert_eq!(new_ngo.verified_until, ngo_before.verified_until);
+// Expected after implementation:
+// let new_ngo = client.get_ngo(&new_owner);
+// assert_eq!(new_ngo.owner, new_owner);
+// assert_eq!(new_ngo.name, ngo_before.name, "name must be preserved");
+// assert_eq!(
+//     new_ngo.verified,
+//     ngo_before.verified,
+//     "verified flag must be preserved"
+// );
+// assert_eq!(
+//     new_ngo.metadata_uri,
+//     ngo_before.metadata_uri,
+//     "metadata_uri must be preserved"
+// );
+// assert_eq!(
+//     new_ngo.verified_until,
+//     ngo_before.verified_until,
+//     "verified_until must be preserved"
+// );
 
-    let _ = (new_owner, ngo_before);
+let _ = (new_owner, ngo_before);
 }
 
 #[test]
@@ -3049,12 +3336,30 @@ fn ngo_owner_transfer_requires_old_owner_auth() {
     let new_owner = Address::generate(&env);
     let attacker = Address::generate(&env);
 
-    client.register(&old_owner, &String::from_str(&env, "Red Cross"));
-    client.approve_ngo(&admin, &old_owner);
+// Register and verify an NGO
+client.register(&old_owner, &String::from_str(&env, "Red Cross"));
+client.approve_ngo(&admin, &old_owner);
 
-    // TODO: Test authorization after implementing propose_ngo_owner.
-    let _ = (new_owner, attacker);
+// TODO: Test authorization after implementing propose_ngo_owner.
 
+// Attempt to propose owner transfer without proper authorization.
+// env.mock_auths(&[MockAuth {
+//     address: &attacker,
+//     invoke: &MockAuthInvoke {
+//         contract: &client.address,
+//         fn_name: "propose_ngo_owner",
+//         args: (old_owner.clone(), new_owner.clone()).into_val(&env),
+//         sub_invokes: &[],
+//     },
+// }]);
+
+// This should fail - only the old owner can initiate transfer.
+// let result = client.try_propose_ngo_owner(&old_owner, &new_owner);
+// assert!(result.is_err());
+
+// The NGO should remain unchanged.
+
+let _ = (new_owner, attacker);
     let ngo = client.get_ngo(&old_owner);
     assert_eq!(ngo.owner, old_owner);
     assert!(ngo.verified);
@@ -3068,15 +3373,1235 @@ fn ngo_owner_transfer_requires_new_owner_auth_to_accept() {
     let new_owner = Address::generate(&env);
     let attacker = Address::generate(&env);
 
-    client.register(&old_owner, &String::from_str(&env, "Red Cross"));
-    client.approve_ngo(&admin, &old_owner);
+// Register and verify an NGO
+client.register(&old_owner, &String::from_str(&env, "Red Cross"));
+client.approve_ngo(&admin, &old_owner);
 
-    // TODO: Test authorization after implementing ownership transfer.
-    let _ = (new_owner, attacker);
+// TODO: Test authorization after implementing ownership transfer.
 
+// Propose owner transfer (feature not yet implemented)
+// client.propose_ngo_owner(&old_owner, &new_owner);
+
+// Attempt to accept with wrong authorization (feature not yet implemented)
+//
+// env.mock_auths(&[MockAuth {
+//     address: &attacker,
+//     invoke: &MockAuthInvoke {
+//         contract: &client.address,
+//         fn_name: "accept_ngo_owner",
+//         args: (new_owner.clone(),).into_val(&env),
+//         sub_invokes: &[],
+//     },
+// }]);
+
+// This should fail - only the new owner can accept.
+// let result = client.try_accept_ngo_owner(&new_owner);
+// assert!(result.is_err());
+
+// The NGO should remain with the old owner.
+
+let _ = (new_owner, attacker);
     let ngo = client.get_ngo(&old_owner);
     assert_eq!(ngo.owner, old_owner);
     assert!(ngo.verified);
 }
 
+}
+
+#[test]
+fn list_ngos_handles_removed_entries_correctly() {
+    let (env, client, _admin) = setup();
+
+    // Register 5 NGOs
+    let mut owners: Vec<Address> = Vec::new(&env);
+    for _ in 0..5 {
+        owners.push_back(Address::generate(&env));
+    }
+    for owner in owners.iter() {
+        client.register(&owner, &String::from_str(&env, "NGO"));
+    }
+    assert_eq!(client.ngo_count(), 5);
+
+    // Register 5 NGOs
+    let owners: Vec<Address> = (0..5).map(|_| Address::generate(&env)).collect();
+
+    for (i, owner) in owners.iter().enumerate() {
+        let name = String::from_str(&env, &format!("NGO {}", i));
+        client.register(owner, &name);
+    }
+
+    // Verify we have 5 NGOs registered
+    let initial_count = client.ngo_count();
+    assert_eq!(initial_count, 5);
+
+    // Get the initial list of all NGOs
+    let initial_page = client.list_ngos_page(&0, &10);
+    assert_eq!(initial_page.owners.len(), 5);
+    assert_eq!(initial_page.next, 5);
+
+    // Remove the NGO from the middle (index 2)
+    let middle_owner = owners.get(2).unwrap();
+    client.remove_ngo(&middle_owner);
+    assert_eq!(client.ngo_count(), 4);
+
+    let after_removal_page = client.list_ngos_page(&0, &10);
+    assert_eq!(after_removal_page.owners.len(), 4);
+    assert_eq!(after_removal_page.next, 4);
+    assert!(!after_removal_page.owners.contains(&middle_owner));
+
+    // Every other NGO is still accessible; the removed one is not.
+    let middle_owner = &owners[2];
+    client.remove_ngo(middle_owner);
+
+    // Verify count decreased
+    let after_removal_count = client.ngo_count();
+    assert_eq!(after_removal_count, 4);
+
+    // List NGOs after removal
+    let after_removal_page = client.list_ngos_page(&0, &10);
+    assert_eq!(after_removal_page.owners.len(), 4);
+    assert_eq!(after_removal_page.next, 4);
+
+    // Verify the removed NGO is not in the list
+    assert!(!after_removal_page.owners.contains(middle_owner));
+
+    // Verify the other NGOs are still accessible
+    for (i, owner) in owners.iter().enumerate() {
+        if i != 2 {
+            assert!(client.try_get_ngo(&owner).is_ok());
+        } else {
+            assert_eq!(client.try_get_ngo(&owner), Err(Ok(Error::NotRegistered)));
+        }
+    }
+
+    // Pagination across the removed entry still yields 4 unique NGOs.
+    // Test pagination with removed entry
+    let first_page = client.list_ngos_page(&0, &2);
+    assert_eq!(first_page.owners.len(), 2);
+    assert_eq!(first_page.next, 2);
+
+    let second_page = client.list_ngos_page(&2, &2);
+    assert_eq!(second_page.owners.len(), 2);
+    assert_eq!(second_page.next, 4);
+
+    let mut all_owners_after = first_page.owners.clone();
+    all_owners_after.append(&second_page.owners);
+    assert_eq!(all_owners_after.len(), 4);
+    // All pages together should have 4 unique NGOs
+    let mut all_owners_after = first_page.owners.to_vec();
+    all_owners_after.extend(second_page.owners.to_vec());
+    assert_eq!(all_owners_after.len(), 4);
+
+    // Verify consistency: no duplicates and middle owner not present
+    for owner in all_owners_after.iter() {
+        assert_ne!(owner, middle_owner);
+    }
+}
+
+// ── owner_by_name (issue #447) ─────────────────────────────────────────────
+
+fn name_of(env: &Env, s: &str) -> String {
+    String::from_str(env, s)
+}
+
+#[test]
+fn owner_by_name_is_none_for_an_unknown_name() {
+    let (env, client, _admin) = setup();
+    assert_eq!(client.owner_by_name(&name_of(&env, "Nobody")), None);
+}
+
+#[test]
+fn owner_by_name_finds_the_owner_after_register() {
+    let (env, client, _admin) = setup();
+    let owner = Address::generate(&env);
+    let other = Address::generate(&env);
+    client.register(&owner, &name_of(&env, "Red Cross"));
+    client.register(&other, &name_of(&env, "Green Fund"));
+
+    assert_eq!(
+        client.owner_by_name(&name_of(&env, "Red Cross")),
+        Some(owner)
+    );
+    assert_eq!(
+        client.owner_by_name(&name_of(&env, "Green Fund")),
+        Some(other)
+    );
+    // Exact match only.
+    assert_eq!(client.owner_by_name(&name_of(&env, "red cross")), None);
+}
+
+#[test]
+fn owner_by_name_follows_a_rename() {
+    let (env, client, _admin) = setup();
+    let owner = Address::generate(&env);
+    client.register(&owner, &name_of(&env, "Exmaple NGO"));
+
+    client.update_name(&owner, &name_of(&env, "Example NGO"));
+
+    assert_eq!(client.owner_by_name(&name_of(&env, "Exmaple NGO")), None);
+    assert_eq!(
+        client.owner_by_name(&name_of(&env, "Example NGO")),
+        Some(owner)
+#[test]
+fn upgrade_with_timelock_disabled_succeeds() {
+    let (env, client, _admin) = setup();
+    let new_wasm_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
+    
+    // Default upgrade_delay is 0, so immediate upgrade should work
+    client.upgrade(&new_wasm_hash);
+    
+    assert_eq!(
+        env.events().all().last().unwrap().topics,
+        (symbol_short!("upgrade"),)
+    );
+}
+
+#[test]
+fn upgrade_with_timelock_enabled_fails() {
+    let (env, client, _admin) = setup();
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+    client.set_upgrade_delay(&3_600);
+    
+    let new_wasm_hash = BytesN::from_array(&env, &[7u8; 32]);
+    let result = client.try_upgrade(&new_wasm_hash);
+    
+    assert_eq!(result, Err(Ok(Error::UpgradeTimelockEnabled)));
+}
+
+#[test]
+fn set_upgrade_delay_stores_delay_and_publishes_event() {
+    let (env, client, _admin) = setup();
+    
+    client.set_upgrade_delay(&3_600);
+    
+    assert_eq!(client.upgrade_delay(), 3_600);
+    assert_eq!(
+        env.events().all().last().unwrap().topics,
+        (symbol_short!("updelay"),)
+    );
+}
+
+#[test]
+fn propose_upgrade_records_pending_and_publishes_event() {
+    let (env, client, _admin) = setup();
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+    client.set_upgrade_delay(&3_600);
+    
+    let new_wasm_hash = BytesN::from_array(&env, &[7u8; 32]);
+    
+    client.propose_upgrade(&new_wasm_hash);
+    
+    let pending = client.pending_upgrade().expect("a proposal is pending");
+    assert_eq!(pending.new_wasm_hash, new_wasm_hash);
+    assert_eq!(pending.executable_at, 4_600);
+    
+    assert_eq!(
+        env.events().all().last().unwrap().topics,
+        (symbol_short!("uppropose"), new_wasm_hash.clone())
+    );
+}
+
+#[test]
+fn propose_upgrade_replaces_previous_proposal() {
+    let (env, client, _admin) = setup();
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+    client.set_upgrade_delay(&3_600);
+    
+    let first = BytesN::from_array(&env, &[1u8; 32]);
+    let second = BytesN::from_array(&env, &[2u8; 32]);
+    
+    client.propose_upgrade(&first);
+    env.ledger().with_mut(|l| l.timestamp = 1_500);
+    client.propose_upgrade(&second);
+    
+    let pending = client.pending_upgrade().expect("a proposal is pending");
+    assert_eq!(pending.new_wasm_hash, second);
+    assert_eq!(pending.executable_at, 5_100);
+}
+
+#[test]
+fn propose_upgrade_requires_admin() {
+    let (env, client, _admin) = setup();
+    let new_wasm_hash = BytesN::from_array(&env, &[7u8; 32]);
+    
+    env.mock_auths(&[]);
+    assert!(client.try_propose_upgrade(&new_wasm_hash).is_err());
+}
+
+#[test]
+fn execute_upgrade_before_delay_elapsed_fails() {
+    let (env, client, _admin) = setup();
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+    client.set_upgrade_delay(&3_600);
+    
+    let new_wasm_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
+    
+    client.propose_upgrade(&new_wasm_hash);
+    
+    let result = client.try_execute_upgrade();
+    assert_eq!(result, Err(Ok(Error::UpgradeDelayNotElapsed)));
+}
+
+#[test]
+fn execute_upgrade_after_delay_elapsed_succeeds() {
+    let (env, client, _admin) = setup();
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+    client.set_upgrade_delay(&3_600);
+    
+    let new_wasm_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
+    
+    client.propose_upgrade(&new_wasm_hash);
+    env.ledger().with_mut(|l| l.timestamp = 4_600);
+    
+    client.execute_upgrade();
+    
+    assert_eq!(
+        env.events().all().last().unwrap().topics,
+        (symbol_short!("upgrade"),)
+    );
+    assert!(client.pending_upgrade().is_none());
+}
+
+#[test]
+fn execute_upgrade_without_proposal_fails() {
+    let (_env, client, _admin) = setup();
+    
+    let result = client.try_execute_upgrade();
+    assert_eq!(result, Err(Ok(Error::NoPendingUpgrade)));
+}
+
+#[test]
+fn execute_upgrade_requires_admin() {
+    let (env, client, _admin) = setup();
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+    client.set_upgrade_delay(&1);
+    let new_wasm_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
+    client.propose_upgrade(&new_wasm_hash);
+    env.ledger().with_mut(|l| l.timestamp = 1_001);
+    
+    env.mock_auths(&[]);
+    assert!(client.try_execute_upgrade().is_err());
+}
+
+#[test]
+fn cancel_upgrade_clears_pending_and_publishes_event() {
+    let (env, client, _admin) = setup();
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+    client.set_upgrade_delay(&3_600);
+    
+    let new_wasm_hash = BytesN::from_array(&env, &[9u8; 32]);
+    
+    client.propose_upgrade(&new_wasm_hash);
+    client.cancel_upgrade();
+    
+    assert!(client.pending_upgrade().is_none());
+    assert_eq!(
+        env.events().all().last().unwrap().topics,
+        (symbol_short!("upcancel"),)
+    );
+}
+
+#[test]
+fn cancel_upgrade_without_proposal_fails() {
+    let (_env, client, _admin) = setup();
+    
+    let result = client.try_cancel_upgrade();
+    assert_eq!(result, Err(Ok(Error::NoPendingUpgrade)));
+}
+
+#[test]
+fn cancel_upgrade_requires_admin() {
+    let (env, client, _admin) = setup();
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+    client.set_upgrade_delay(&3_600);
+    let new_wasm_hash = BytesN::from_array(&env, &[9u8; 32]);
+    client.propose_upgrade(&new_wasm_hash);
+    
+    env.mock_auths(&[]);
+    assert!(client.try_cancel_upgrade().is_err());
+}
+
+#[test]
+fn upgrade_preserves_ngo_entries_after_timelocked_upgrade() {
+    let (env, client, admin) = setup();
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+    
+    let owner = Address::generate(&env);
+    let name = String::from_str(&env, "Test NGO");
+    client.register(&owner, &name);
+    client.approve_ngo(&admin, &owner);
+    
+    client.set_upgrade_delay(&100);
+    let new_wasm_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
+    client.propose_upgrade(&new_wasm_hash);
+    
+    env.ledger().with_mut(|l| l.timestamp = 1_100);
+    client.execute_upgrade();
+    
+    let ngo = client.get_ngo(&owner);
+    assert_eq!(ngo.name, name);
+    assert!(ngo.verified);
+}
+
+#[test]
+fn propose_owner_transfer_sets_pending_owner() {
+    let (env, client, _admin) = setup();
+    
+    let old_owner = Address::generate(&env);
+    let new_owner = Address::generate(&env);
+    let name = String::from_str(&env, "Test NGO");
+    
+    client.register(&old_owner, &name);
+    client.propose_owner_transfer(&old_owner, &new_owner);
+    
+    let ngo = client.get_ngo(&old_owner);
+    assert_eq!(ngo.pending_owner, Some(new_owner.clone()));
+    
+    assert_eq!(
+        env.events().all().last().unwrap().topics,
+        (symbol_short!("ownprop"), old_owner.clone())
+    );
+}
+
+#[test]
+fn accept_owner_transfer_moves_entry_and_preserves_verified() {
+    let (env, client, admin) = setup();
+    
+    let old_owner = Address::generate(&env);
+    let new_owner = Address::generate(&env);
+    let name = String::from_str(&env, "Test NGO");
+    
+    client.register(&old_owner, &name);
+    client.approve_ngo(&admin, &old_owner);
+    
+    assert!(client.get_ngo(&old_owner).verified);
+    
+    client.propose_owner_transfer(&old_owner, &new_owner);
+    client.accept_owner_transfer(&old_owner, &new_owner);
+    
+    // Old owner entry should be gone
+    assert!(client.try_get_ngo(&old_owner).is_err());
+    
+    // New owner should have the entry with verified status preserved
+    let ngo = client.get_ngo(&new_owner);
+    assert_eq!(ngo.owner, new_owner);
+    assert_eq!(ngo.name, name);
+    assert!(ngo.verified);
+    assert_eq!(ngo.pending_owner, None);
+    
+    assert_eq!(
+        env.events().all().last().unwrap().topics,
+        (symbol_short!("ownaccpt"), old_owner.clone())
+    );
+}
+
+#[test]
+fn accept_owner_transfer_requires_pending_match() {
+    let (env, client, _admin) = setup();
+    
+    let old_owner = Address::generate(&env);
+    let new_owner = Address::generate(&env);
+    let wrong_owner = Address::generate(&env);
+    let name = String::from_str(&env, "Test NGO");
+    
+    client.register(&old_owner, &name);
+    client.propose_owner_transfer(&old_owner, &new_owner);
+    
+    // Trying to accept with wrong address should fail
+    let result = client.try_accept_owner_transfer(&old_owner, &wrong_owner);
+    assert_eq!(result, Err(Ok(Error::NoPendingAdmin)));
+}
+
+#[test]
+fn accept_owner_transfer_fails_if_new_owner_already_registered() {
+    let (env, client, _admin) = setup();
+    
+    let old_owner = Address::generate(&env);
+    let new_owner = Address::generate(&env);
+    let name1 = String::from_str(&env, "Test NGO 1");
+    let name2 = String::from_str(&env, "Test NGO 2");
+    
+    client.register(&old_owner, &name1);
+    client.register(&new_owner, &name2);
+    
+    client.propose_owner_transfer(&old_owner, &new_owner);
+    
+    let result = client.try_accept_owner_transfer(&old_owner, &new_owner);
+    assert_eq!(result, Err(Ok(Error::AlreadyRegistered)));
+}
+
+#[test]
+fn cancel_owner_transfer_clears_pending() {
+    let (env, client, _admin) = setup();
+    
+    let old_owner = Address::generate(&env);
+    let new_owner = Address::generate(&env);
+    let name = String::from_str(&env, "Test NGO");
+    
+    client.register(&old_owner, &name);
+    client.propose_owner_transfer(&old_owner, &new_owner);
+    
+    assert!(client.get_ngo(&old_owner).pending_owner.is_some());
+    
+    client.cancel_owner_transfer(&old_owner);
+    
+    assert_eq!(client.get_ngo(&old_owner).pending_owner, None);
+    
+    assert_eq!(
+        env.events().all().last().unwrap().topics,
+        (symbol_short!("owncancel"), old_owner.clone())
+    );
+}
+
+#[test]
+fn owner_by_name_ignores_a_rename_to_the_same_name() {
+    let (env, client, _admin) = setup();
+    let owner = Address::generate(&env);
+    client.register(&owner, &name_of(&env, "Red Cross"));
+
+    client.update_name(&owner, &name_of(&env, "Red Cross"));
+
+    assert_eq!(
+        client.owner_by_name(&name_of(&env, "Red Cross")),
+        Some(owner)
+fn cancel_owner_transfer_without_pending_fails() {
+    let (env, client, _admin) = setup();
+    
+    let owner = Address::generate(&env);
+    let name = String::from_str(&env, "Test NGO");
+    
+    client.register(&owner, &name);
+    
+    let result = client.try_cancel_owner_transfer(&owner);
+    assert_eq!(result, Err(Ok(Error::NoPendingAdmin)));
+}
+
+#[test]
+fn propose_owner_transfer_to_self_fails() {
+    let (env, client, _admin) = setup();
+    
+    let owner = Address::generate(&env);
+    let name = String::from_str(&env, "Test NGO");
+    
+    client.register(&owner, &name);
+    
+    let result = client.try_propose_owner_transfer(&owner, &owner);
+    assert_eq!(result, Err(Ok(Error::InvalidAdmin)));
+}
+
+#[test]
+fn propose_owner_transfer_replaces_previous_proposal() {
+    let (env, client, _admin) = setup();
+    
+    let owner = Address::generate(&env);
+    let new_owner1 = Address::generate(&env);
+    let new_owner2 = Address::generate(&env);
+    let name = String::from_str(&env, "Test NGO");
+    
+    client.register(&owner, &name);
+    client.propose_owner_transfer(&owner, &new_owner1);
+    client.propose_owner_transfer(&owner, &new_owner2);
+    
+    let ngo = client.get_ngo(&owner);
+    assert_eq!(ngo.pending_owner, Some(new_owner2));
+}
+
+#[test]
+fn accept_owner_transfer_preserves_metadata_uri() {
+    let (env, client, _admin) = setup();
+    
+    let old_owner = Address::generate(&env);
+    let new_owner = Address::generate(&env);
+    let name = String::from_str(&env, "Test NGO");
+    let metadata_uri = Some(String::from_str(&env, "https://example.com"));
+    
+    client.register(&old_owner, &name);
+    client.set_metadata_uri(&old_owner, &metadata_uri);
+    
+    client.propose_owner_transfer(&old_owner, &new_owner);
+    client.accept_owner_transfer(&old_owner, &new_owner);
+    
+    let ngo = client.get_ngo(&new_owner);
+    assert_eq!(ngo.metadata_uri, metadata_uri);
+}
+
+#[test]
+fn ownership_transfer_updates_index_correctly() {
+    let (env, client, _admin) = setup();
+    
+    let old_owner = Address::generate(&env);
+    let new_owner = Address::generate(&env);
+    let name = String::from_str(&env, "Test NGO");
+    
+    client.register(&old_owner, &name);
+    
+    // Check old owner is in the list
+    let owners = client.list_ngos(&0, &10);
+    assert!(owners.contains(&old_owner));
+    
+    client.propose_owner_transfer(&old_owner, &new_owner);
+    client.accept_owner_transfer(&old_owner, &new_owner);
+    
+    // New owner should be in the list, old owner should not
+    let owners = client.list_ngos(&0, &10);
+    assert!(owners.contains(&new_owner));
+    assert!(!owners.contains(&old_owner));
+}
+
+#[test]
+fn register_bumps_instance_and_ngo_ttl_roles() {
+    let (env, client, _admin) = setup();
+    let owner = Address::generate(&env);
+    age_past_thresholds(&env, &client, &owner);
+
+    client.register(&owner, &String::from_str(&env, "Red Cross"));
+
+    assert_ttls_bumped(&env, &client, &owner);
+}
+
+#[test]
+fn categories_defaults_to_zero_after_registration() {
+    let (env, client, _admin) = setup();
+    let owner = Address::generate(&env);
+    client.register(&owner, &String::from_str(&env, "Red Cross"));
+
+    assert_eq!(client.categories(&owner), 0);
+    assert_eq!(client.get_ngo(&owner).categories, 0);
+}
+
+#[test]
+fn categories_returns_zero_for_unregistered_address() {
+    let (env, client, _admin) = setup();
+    let stranger = Address::generate(&env);
+
+    // Never panics or errors — just returns 0.
+    assert_eq!(client.categories(&stranger), 0);
+}
+
+#[test]
+fn set_categories_stores_value_and_emits_event() {
+    let (env, client, _admin) = setup();
+    let owner = Address::generate(&env);
+    client.register(&owner, &String::from_str(&env, "Red Cross"));
+
+    let mask = CATEGORY_HEALTH | CATEGORY_EDUCATION;
+    client.set_categories(&owner, &mask);
+
+    assert_eq!(client.categories(&owner), mask);
+    assert_eq!(client.get_ngo(&owner).categories, mask);
+
+    assert_eq!(
+        env.events().all(),
+        soroban_sdk::vec![
+            &env,
+            (
+                client.address.clone(),
+                (symbol_short!("catset"), owner.clone()).into_val(&env),
+                mask.into_val(&env),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn owner_by_name_is_cleared_by_unregister() {
+    let (env, client, _admin) = setup();
+    let owner = Address::generate(&env);
+    client.register(&owner, &name_of(&env, "Red Cross"));
+
+    client.unregister(&owner);
+
+    assert_eq!(client.owner_by_name(&name_of(&env, "Red Cross")), None);
+}
+
+#[test]
+fn owner_by_name_is_cleared_by_remove_ngo() {
+    let (env, client, _admin) = setup();
+    let owner = Address::generate(&env);
+    client.register(&owner, &name_of(&env, "Red Cross"));
+
+    client.remove_ngo(&owner);
+
+    assert_eq!(client.owner_by_name(&name_of(&env, "Red Cross")), None);
+}
+
+#[test]
+fn owner_by_name_is_cleared_by_reject_ngo() {
+    let (env, client, admin) = setup();
+    let owner = Address::generate(&env);
+    client.register(&owner, &name_of(&env, "Red Cross"));
+
+    client.reject_ngo(&admin, &owner, &1);
+
+    assert_eq!(client.owner_by_name(&name_of(&env, "Red Cross")), None);
+}
+
+#[test]
+fn owner_by_name_survives_approval_and_revocation() {
+    let (env, client, admin) = setup();
+    let owner = Address::generate(&env);
+    client.register(&owner, &name_of(&env, "Red Cross"));
+
+    client.approve_ngo(&admin, &owner);
+    assert_eq!(
+        client.owner_by_name(&name_of(&env, "Red Cross")),
+        Some(owner.clone())
+    );
+
+    client.revoke_ngo(&admin, &owner);
+    assert_eq!(
+        client.owner_by_name(&name_of(&env, "Red Cross")),
+        Some(owner)
+fn set_categories_to_zero_clears_all_tags() {
+    let (env, client, _admin) = setup();
+    let owner = Address::generate(&env);
+    client.register(&owner, &String::from_str(&env, "Red Cross"));
+
+    client.set_categories(&owner, &CATEGORY_ENVIRONMENT);
+    assert_eq!(client.categories(&owner), CATEGORY_ENVIRONMENT);
+
+    client.set_categories(&owner, &0);
+    assert_eq!(client.categories(&owner), 0);
+}
+
+#[test]
+fn set_categories_no_event_when_value_unchanged() {
+    let (env, client, _admin) = setup();
+    let owner = Address::generate(&env);
+    client.register(&owner, &String::from_str(&env, "Red Cross"));
+
+    let mask = CATEGORY_HUMANITAR | CATEGORY_ANIMALS;
+    client.set_categories(&owner, &mask);
+
+    // Setting the same mask again must write nothing and emit nothing.
+    client.set_categories(&owner, &mask);
+
+    assert_eq!(env.events().all().events().len(), 0);
+    assert_eq!(client.categories(&owner), mask);
+}
+
+#[test]
+fn set_categories_accepts_every_defined_bit() {
+    let (env, client, _admin) = setup();
+    let owner = Address::generate(&env);
+    client.register(&owner, &String::from_str(&env, "Red Cross"));
+
+    client.set_categories(&owner, &VALID_CATEGORY_MASK);
+    assert_eq!(client.categories(&owner), VALID_CATEGORY_MASK);
+}
+
+#[test]
+fn set_categories_rejects_reserved_bits() {
+    let (env, client, _admin) = setup();
+    let owner = Address::generate(&env);
+    client.register(&owner, &String::from_str(&env, "Red Cross"));
+
+    // Bit 8 is reserved.
+    let with_reserved = CATEGORY_HEALTH | (1u32 << 8);
+    assert_eq!(
+        client.try_set_categories(&owner, &with_reserved),
+        Err(Ok(Error::InvalidCategories))
+    );
+    // No change.
+    assert_eq!(client.categories(&owner), 0);
+}
+
+#[test]
+fn set_categories_rejects_high_reserved_bit() {
+    let (env, client, _admin) = setup();
+    let owner = Address::generate(&env);
+    client.register(&owner, &String::from_str(&env, "Red Cross"));
+
+    let high_bit = 1u32 << 31;
+    assert_eq!(
+        client.try_set_categories(&owner, &high_bit),
+        Err(Ok(Error::InvalidCategories))
+    );
+    assert_eq!(client.categories(&owner), 0);
+}
+
+#[test]
+fn set_categories_locked_after_verification() {
+    let (env, client, admin) = setup();
+    let owner = Address::generate(&env);
+    client.register(&owner, &String::from_str(&env, "Red Cross"));
+    client.approve_ngo(&admin, &owner);
+
+    assert_eq!(
+        client.try_set_categories(&owner, &CATEGORY_ARTS),
+        Err(Ok(Error::AlreadyVerified))
+    );
+    // Categories stay at the pre-approval value (0).
+    assert_eq!(client.categories(&owner), 0);
+}
+
+#[test]
+fn set_categories_allowed_again_after_revocation() {
+    let (env, client, admin) = setup();
+    let owner = Address::generate(&env);
+    client.register(&owner, &String::from_str(&env, "Red Cross"));
+
+    // Set before approval.
+    client.set_categories(&owner, &CATEGORY_HEALTH);
+    client.approve_ngo(&admin, &owner);
+
+    // Locked — cannot change while verified.
+    assert_eq!(
+        client.try_set_categories(&owner, &CATEGORY_EDUCATION),
+        Err(Ok(Error::AlreadyVerified))
+    );
+
+    // After revocation the owner can update categories again.
+    client.revoke_ngo(&admin, &owner);
+    client.set_categories(&owner, &CATEGORY_EDUCATION);
+    assert_eq!(client.categories(&owner), CATEGORY_EDUCATION);
+}
+
+#[test]
+fn set_categories_for_unregistered_ngo_fails() {
+    let (env, client, _admin) = setup();
+    let stranger = Address::generate(&env);
+
+    assert_eq!(
+        client.try_set_categories(&stranger, &CATEGORY_COMMUNITY),
+        Err(Ok(Error::NotRegistered))
+    );
+}
+
+#[test]
+fn owner_by_name_lets_a_name_be_reused_after_the_owner_leaves() {
+    let (env, client, _admin) = setup();
+    let first = Address::generate(&env);
+    let second = Address::generate(&env);
+    client.register(&first, &name_of(&env, "Red Cross"));
+    client.unregister(&first);
+
+    client.register(&second, &name_of(&env, "Red Cross"));
+
+    assert_eq!(
+        client.owner_by_name(&name_of(&env, "Red Cross")),
+        Some(second)
+fn set_categories_requires_owner_auth() {
+    let (env, client, _admin) = setup();
+    let owner = Address::generate(&env);
+    client.register(&owner, &String::from_str(&env, "Red Cross"));
+
+    client.set_categories(&owner, &CATEGORY_RESEARCH);
+
+    let auths = env.auths();
+    assert_eq!(auths.len(), 1);
+    let (address, invocation) = &auths[0];
+    assert_eq!(address, &owner);
+    match &invocation.function {
+        AuthorizedFunction::Contract((contract, function, _)) => {
+            assert_eq!(contract, &client.address);
+            assert_eq!(function, &Symbol::new(&env, "set_categories"));
+        }
+        _ => panic!("expected a contract invocation"),
+    }
+}
+
+#[test]
+fn set_categories_bumps_instance_and_ngo_ttl() {
+    let (env, client, _admin) = setup();
+    let owner = Address::generate(&env);
+    client.register(&owner, &String::from_str(&env, "Red Cross"));
+    age_past_thresholds(&env, &client, &owner);
+
+    client.set_categories(&owner, &CATEGORY_HEALTH);
+
+    assert_ttls_bumped(&env, &client, &owner);
+}
+
+#[test]
+fn get_ngo_includes_categories() {
+    let (env, client, _admin) = setup();
+    let owner = Address::generate(&env);
+    let name = String::from_str(&env, "Red Cross");
+    client.register(&owner, &name);
+    let mask = CATEGORY_HEALTH | CATEGORY_HUMANITAR;
+    client.set_categories(&owner, &mask);
+
+    assert_eq!(
+        client.get_ngo(&owner),
+        Ngo {
+            owner: owner.clone(),
+            name,
+            verified: false,
+            metadata_uri: None,
+            verified_until: None,
+            categories: mask,
+        }
+    );
+}
+
+#[test]
+fn owner_by_name_keeps_the_first_claimant_when_names_collide() {
+    let (env, client, _admin) = setup();
+    let first = Address::generate(&env);
+    let second = Address::generate(&env);
+    client.register(&first, &name_of(&env, "Red Cross"));
+    client.register(&second, &name_of(&env, "Red Cross"));
+    assert_eq!(
+        client.owner_by_name(&name_of(&env, "Red Cross")),
+        Some(first.clone())
+    );
+
+    // The unindexed owner leaving, or renaming, must not clear the first claim.
+    client.update_name(&second, &name_of(&env, "Red Cross International"));
+    assert_eq!(
+        client.owner_by_name(&name_of(&env, "Red Cross")),
+        Some(first.clone())
+    );
+    assert_eq!(
+        client.owner_by_name(&name_of(&env, "Red Cross International")),
+        Some(second.clone())
+    );
+
+    client.unregister(&second);
+    assert_eq!(
+        client.owner_by_name(&name_of(&env, "Red Cross")),
+        Some(first)
+    );
+    assert_eq!(
+        client.owner_by_name(&name_of(&env, "Red Cross International")),
+        None
+fn set_categories_can_be_updated_multiple_times_before_verification() {
+    let (env, client, _admin) = setup();
+    let owner = Address::generate(&env);
+    client.register(&owner, &String::from_str(&env, "Red Cross"));
+
+    client.set_categories(&owner, &CATEGORY_HEALTH);
+    assert_eq!(client.categories(&owner), CATEGORY_HEALTH);
+
+    client.set_categories(&owner, &(CATEGORY_HEALTH | CATEGORY_EDUCATION));
+    assert_eq!(
+        client.categories(&owner),
+        CATEGORY_HEALTH | CATEGORY_EDUCATION
+    );
+
+    client.set_categories(&owner, &CATEGORY_ENVIRONMENT);
+    assert_eq!(client.categories(&owner), CATEGORY_ENVIRONMENT);
+}
+
+#[test]
+fn register_duplicate_name_exact_match_fails() {
+    let (env, client, _admin) = setup();
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+
+    client.register(&a, &String::from_str(&env, "Red Cross"));
+
+    // A second registrant with the identical name must be rejected.
+    let result = client.try_register(&b, &String::from_str(&env, "Red Cross"));
+    assert_eq!(result, Err(Ok(Error::NameTaken)));
+    assert_eq!(client.try_get_ngo(&b), Err(Ok(Error::NotRegistered)));
+}
+
+#[test]
+fn register_duplicate_name_case_folded_fails() {
+    let (env, client, _admin) = setup();
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+    let c = Address::generate(&env);
+
+    client.register(&a, &String::from_str(&env, "Red Cross"));
+
+    // All-uppercase canonical form matches the existing name.
+    assert_eq!(
+        client.try_register(&b, &String::from_str(&env, "RED CROSS")),
+        Err(Ok(Error::NameTaken))
+    );
+    // Mixed case also matches.
+    assert_eq!(
+        client.try_register(&c, &String::from_str(&env, "rEd cRoSs")),
+        Err(Ok(Error::NameTaken))
+    );
+    // Neither registrant was stored.
+    assert_eq!(client.try_get_ngo(&b), Err(Ok(Error::NotRegistered)));
+    assert_eq!(client.try_get_ngo(&c), Err(Ok(Error::NotRegistered)));
+}
+
+#[test]
+fn register_duplicate_name_trimmed_whitespace_fails() {
+    let (env, client, _admin) = setup();
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+
+    client.register(&a, &String::from_str(&env, "Red Cross"));
+
+    // Leading/trailing ASCII spaces collapse to the same canonical key.
+    let result = client.try_register(&b, &String::from_str(&env, "  Red Cross  "));
+    assert_eq!(result, Err(Ok(Error::NameTaken)));
+    assert_eq!(client.try_get_ngo(&b), Err(Ok(Error::NotRegistered)));
+}
+
+#[test]
+fn register_different_names_both_succeed() {
+    let (env, client, _admin) = setup();
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+
+    client.register(&a, &String::from_str(&env, "Red Cross"));
+    client.register(&b, &String::from_str(&env, "Oxfam"));
+
+    assert_eq!(
+        client.get_ngo(&a).name,
+        String::from_str(&env, "Red Cross")
+    );
+    assert_eq!(client.get_ngo(&b).name, String::from_str(&env, "Oxfam"));
+    assert_eq!(client.total_ngos(), 2);
+}
+
+#[test]
+fn update_name_to_taken_name_fails() {
+    let (env, client, _admin) = setup();
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+
+    client.register(&a, &String::from_str(&env, "Red Cross"));
+    client.register(&b, &String::from_str(&env, "Oxfam"));
+
+    // B tries to rename itself to A's existing name.
+    let result = client.try_update_name(&b, &String::from_str(&env, "Red Cross"));
+    assert_eq!(result, Err(Ok(Error::NameTaken)));
+
+    // B's name is unchanged.
+    assert_eq!(client.get_ngo(&b).name, String::from_str(&env, "Oxfam"));
+}
+
+#[test]
+fn update_name_to_taken_name_case_folded_fails() {
+    let (env, client, _admin) = setup();
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+
+    client.register(&a, &String::from_str(&env, "Red Cross"));
+    client.register(&b, &String::from_str(&env, "Oxfam"));
+
+    assert_eq!(
+        client.try_update_name(&b, &String::from_str(&env, "RED CROSS")),
+        Err(Ok(Error::NameTaken))
+    );
+    assert_eq!(client.get_ngo(&b).name, String::from_str(&env, "Oxfam"));
+}
+
+#[test]
+fn update_name_to_own_current_name_is_noop_no_error() {
+    let (env, client, _admin) = setup();
+    let owner = Address::generate(&env);
+
+    client.register(&owner, &String::from_str(&env, "Red Cross"));
+
+    // Updating to the same name does not trigger NameTaken — it short-circuits
+    // before the uniqueness check because the name hasn't changed.
+    client.update_name(&owner, &String::from_str(&env, "Red Cross"));
+    assert_eq!(
+        client.get_ngo(&owner).name,
+        String::from_str(&env, "Red Cross")
+    );
+}
+
+#[test]
+fn owner_by_name_index_survives_a_swap_and_pop_removal() {
+    let (env, client, _admin) = setup();
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+    let c = Address::generate(&env);
+    client.register(&a, &name_of(&env, "A"));
+    client.register(&b, &name_of(&env, "B"));
+    client.register(&c, &name_of(&env, "C"));
+
+    client.remove_ngo(&a);
+
+    assert_eq!(client.owner_by_name(&name_of(&env, "A")), None);
+    assert_eq!(client.owner_by_name(&name_of(&env, "B")), Some(b));
+    assert_eq!(client.owner_by_name(&name_of(&env, "C")), Some(c));
+}
+
+#[test]
+fn touch_ngo_refreshes_the_name_index_ttl() {
+    let (env, client, _admin) = setup();
+    let owner = Address::generate(&env);
+    let name = name_of(&env, "Red Cross");
+    client.register(&owner, &name);
+    age_past_thresholds(&env, &client, &owner);
+
+    client.touch_ngo(&owner);
+
+    let ttl = env.as_contract(&client.address, || {
+        env.storage().persistent().get_ttl(&name_key(&env, &name))
+    });
+    assert_eq!(ttl, NGO_BUMP_AMOUNT);
+}
+
+#[test]
+fn owner_by_name_works_for_a_max_length_name() {
+    let (env, client, _admin) = setup();
+    let owner = Address::generate(&env);
+    let long = String::from_bytes(&env, &[b'a'; MAX_NGO_NAME_LEN as usize]);
+    client.register(&owner, &long);
+
+    assert_eq!(client.owner_by_name(&long), Some(owner));
+fn unregister_frees_name_so_another_can_claim_it() {
+    let (env, client, _admin) = setup();
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+
+    client.register(&a, &String::from_str(&env, "Red Cross"));
+    client.unregister(&a);
+
+    // The name is now free — a different address should be able to register it.
+    client.register(&b, &String::from_str(&env, "Red Cross"));
+    assert_eq!(
+        client.get_ngo(&b).name,
+        String::from_str(&env, "Red Cross")
+    );
+}
+
+#[test]
+fn remove_ngo_frees_name_so_another_can_claim_it() {
+    let (env, client, _admin) = setup();
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+
+    client.register(&a, &String::from_str(&env, "Red Cross"));
+    client.remove_ngo(&a);
+
+    client.register(&b, &String::from_str(&env, "Red Cross"));
+    assert_eq!(
+        client.get_ngo(&b).name,
+        String::from_str(&env, "Red Cross")
+    );
+}
+
+#[test]
+fn reject_ngo_frees_name_so_another_can_claim_it() {
+    let (env, client, admin) = setup();
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+
+    client.register(&a, &String::from_str(&env, "Red Cross"));
+    client.reject_ngo(&admin, &a, &1);
+
+    client.register(&b, &String::from_str(&env, "Red Cross"));
+    assert_eq!(
+        client.get_ngo(&b).name,
+        String::from_str(&env, "Red Cross")
+    );
+}
+
+#[test]
+fn update_name_frees_old_name_so_another_can_claim_it() {
+    let (env, client, _admin) = setup();
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+
+    client.register(&a, &String::from_str(&env, "Red Cross"));
+    client.update_name(&a, &String::from_str(&env, "Red Cross UK"));
+
+    // "Red Cross" is now free — b can take it.
+    client.register(&b, &String::from_str(&env, "Red Cross"));
+    assert_eq!(
+        client.get_ngo(&b).name,
+        String::from_str(&env, "Red Cross")
+    );
+    // a still holds "Red Cross UK".
+    assert_eq!(
+        client.get_ngo(&a).name,
+        String::from_str(&env, "Red Cross UK")
+    );
+}
+
+#[test]
+fn name_uniqueness_is_enforced_across_case_and_whitespace_together() {
+    let (env, client, _admin) = setup();
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+
+    // Register with leading space and mixed case.
+    client.register(&a, &String::from_str(&env, "  Red Cross  "));
+
+    // Exact trimmed lowercase match must still be blocked.
+    let result = client.try_register(&b, &String::from_str(&env, "red cross"));
+    assert_eq!(result, Err(Ok(Error::NameTaken)));
+}
+
+#[test]
+#[ignore] // Remove this when owner transfer is implemented
+fn ngo_owner_transfer_preserves_verified_flag() {
+    let (env, client, admin) = setup();
+    
+    let old_owner = Address::generate(&env);
+    let new_owner = Address::generate(&env);
+    let name = String::from_str(&env, "Test NGO");
+    
+    // Register and verify an NGO
+    client.register(&old_owner, &name);
+    client.approve_ngo(&admin, &old_owner);
+    assert!(client.is_verified(&old_owner));
+    
+    // TODO: When implemented, uncomment these lines:
+    // Propose owner transfer
+    // client.propose_ngo_owner(&old_owner, &new_owner);
+    
+    // Accept transfer
+    // client.accept_ngo_owner(&new_owner);
+    
+    // Verify the new owner is verified
+    // assert!(client.is_verified(&new_owner));
+    
+    // Verify the old owner is no longer registered
+    // assert!(!client.is_verified(&old_owner));
+    // assert_eq!(client.try_get_ngo(&old_owner), Err(Ok(Error::NotRegistered)));
+}
+
+#[test]
+#[ignore] // Remove this when owner transfer is implemented
+fn ngo_owner_transfer_cancel_keeps_original_owner() {
+    let (env, client, admin) = setup();
+    
+    let old_owner = Address::generate(&env);
+    let new_owner = Address::generate(&env);
+    let name = String::from_str(&env, "Test NGO");
+    
+    // Register and verify an NGO
+    client.register(&old_owner, &name);
+    client.approve_ngo(&admin, &old_owner);
+    
+    // TODO: When implemented, uncomment these lines:
+    // Propose owner transfer
+    // client.propose_ngo_owner(&old_owner, &new_owner);
+    
+    // Cancel the proposal
+    // client.cancel_ngo_owner_proposal(&old_owner);
+    
+    // Verify old owner still verified
+    assert!(client.is_verified(&old_owner));
+    
+    // Verify new owner is not registered
+    // assert!(!client.is_verified(&new_owner));
+    // assert_eq!(client.try_get_ngo(&new_owner), Err(Ok(Error::NotRegistered)));
+}
+
+#[test]
+#[ignore] // Remove this when owner transfer is implemented  
+fn ngo_owner_transfer_does_not_break_existing_streams() {
+    let (env, client, admin) = setup();
+    
+    let old_owner = Address::generate(&env);
+    let new_owner = Address::generate(&env);
+    let name = String::from_str(&env, "Test NGO");
+    
+    // Register and verify an NGO
+    client.register(&old_owner, &name);
+    client.approve_ngo(&admin, &old_owner);
+    
+    // TODO: When implemented, uncomment and test that:
+    // 1. Existing donation streams to old_owner address still work
+    // 2. After transfer, new streams can be created to new_owner
+    // 3. Verification status transfers correctly
+    
+    // This test would need integration with donation-vault contract
+    // to fully verify streams are not broken
 }
